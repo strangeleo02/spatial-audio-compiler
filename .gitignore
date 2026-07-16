@@ -1,0 +1,17 @@
+# Compiled binaries and object files
+*.o
+*.obj
+bin/spatial_mixer.exe
+bin/spatial_mixer
+
+# Python caches and venv
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+
+# OS-specific files
+.DS_Store
+Thumbs.db
