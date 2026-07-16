@@ -1,0 +1,450 @@
+/* General Reset */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    font-family: 'Inter', sans-serif;
+    user-select: none;
+}
+
+body {
+    background-color: #090d16;
+    color: #f8fafc;
+    overflow: hidden;
+    height: 100vh;
+}
+
+/* App Container Layout */
+.app-container {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+}
+
+/* Header Styling */
+.app-header {
+    height: 70px;
+    background-color: #0f172a;
+    border-bottom: 1px solid #1e293b;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0 24px;
+}
+
+.header-logo {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.logo-icon {
+    font-size: 24px;
+}
+
+.logo-text h1 {
+    font-size: 18px;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+    color: #f8fafc;
+}
+
+.logo-text p {
+    font-size: 11px;
+    color: #64748b;
+    margin-top: 1px;
+}
+
+.header-status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background-color: #1e293b;
+    padding: 6px 14px;
+    border-radius: 20px;
+    border: 1px solid #334155;
+}
+
+.status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background-color: #10b981;
+    box-shadow: 0 0 8px #10b981;
+}
+
+.status-dot.loading {
+    background-color: #f59e0b;
+    box-shadow: 0 0 8px #f59e0b;
+}
+
+.status-text {
+    font-size: 12px;
+    font-weight: 600;
+    color: #cbd5e1;
+}
+
+/* Main Workspace */
+.app-workspace {
+    flex: 1;
+    display: grid;
+    grid-template-columns: 320px 1fr 300px;
+    height: calc(100vh - 70px);
+    background-color: #0b0f19;
+}
+
+/* Cards & Panel Layout */
+.panel-left, .panel-right {
+    background-color: #0b0f19;
+    border-right: 1px solid #1e293b;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    overflow-y: auto;
+}
+
+.panel-right {
+    border-right: none;
+    border-left: 1px solid #1e293b;
+}
+
+.panel-center {
+    display: flex;
+    flex-direction: column;
+    padding: 16px;
+    height: 100%;
+}
+
+.card {
+    background-color: #111827;
+    border: 1px solid #1f2937;
+    border-radius: 12px;
+    padding: 18px;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+}
+
+.card h2 {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    color: #7c3aed;
+    margin-bottom: 6px;
+}
+
+.card-desc {
+    font-size: 12px;
+    color: #9ca3af;
+    line-height: 1.4;
+    margin-bottom: 14px;
+}
+
+/* Demucs Upload Card */
+.upload-zone {
+    border: 2px dashed #374151;
+    border-radius: 8px;
+    padding: 20px;
+    text-align: center;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    transition: border-color 0.2s, background-color 0.2s;
+}
+
+.upload-zone:hover {
+    border-color: #7c3aed;
+    background-color: #1f2937;
+}
+
+.upload-zone input[type="file"] {
+    display: none;
+}
+
+.upload-icon {
+    font-size: 32px;
+}
+
+.upload-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: #f3f4f6;
+}
+
+.upload-subtitle {
+    font-size: 11px;
+    color: #6b7280;
+}
+
+.btn {
+    width: 100%;
+    padding: 10px;
+    border: none;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background-color 0.2s, opacity 0.2s;
+    margin-top: 10px;
+}
+
+.btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.btn-primary {
+    background-color: #7c3aed;
+    color: #ffffff;
+}
+
+.btn-primary:hover:not(:disabled) {
+    background-color: #6d28d9;
+}
+
+.btn-success {
+    background-color: #10b981;
+    color: #ffffff;
+}
+
+.btn-success:hover:not(:disabled) {
+    background-color: #059669;
+}
+
+.btn-danger {
+    background-color: #ef4444;
+    color: #ffffff;
+}
+
+.btn-danger:hover:not(:disabled) {
+    background-color: #dc2626;
+}
+
+.btn-secondary {
+    background-color: #3b82f6;
+    color: #ffffff;
+}
+
+.btn-secondary:hover:not(:disabled) {
+    background-color: #2563eb;
+}
+
+/* Demucs Progress */
+.progress-container {
+    margin-top: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.progress-container.hidden {
+    display: none;
+}
+
+.progress-header {
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.progress-bar-bg {
+    height: 6px;
+    background-color: #374151;
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.progress-bar-fill {
+    width: 0%;
+    height: 100%;
+    background-color: #7c3aed;
+    border-radius: 3px;
+    transition: width 0.3s;
+}
+
+.progress-status-msg {
+    font-size: 11px;
+    color: #9ca3af;
+    font-style: italic;
+}
+
+/* Playback & Mix Card */
+.transport-buttons {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 16px;
+}
+
+.transport-buttons .btn {
+    margin-top: 0;
+}
+
+.timeline-container {
+    margin-bottom: 20px;
+}
+
+.timeline-container input[type="range"] {
+    width: 100%;
+    margin-bottom: 6px;
+    accent-color: #7c3aed;
+    cursor: pointer;
+}
+
+.time-labels {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    font-family: 'JetBrains Mono', monospace;
+    color: #9ca3af;
+}
+
+.volume-container {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.vol-icon {
+    font-size: 16px;
+}
+
+.volume-container label {
+    font-size: 12px;
+    font-weight: 600;
+    color: #9ca3af;
+    flex: 1;
+}
+
+.volume-container input[type="range"] {
+    flex: 2;
+    accent-color: #10b981;
+    cursor: pointer;
+}
+
+.vol-percent {
+    font-size: 12px;
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 600;
+    color: #10b981;
+    width: 35px;
+    text-align: right;
+}
+
+/* 3D Auditorium Viewport Panel */
+.stage-viewport-container {
+    flex: 1;
+    background-color: #111827;
+    border: 1px solid #1f2937;
+    border-radius: 12px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.viewport-header {
+    height: 48px;
+    background-color: #1f2937;
+    border-bottom: 1px solid #374151;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0 16px;
+}
+
+.viewport-header h2 {
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    color: #cbd5e1;
+}
+
+.viewport-tips {
+    display: flex;
+    gap: 8px;
+    font-size: 11px;
+    color: #9ca3af;
+}
+
+.viewport-tips .separator {
+    color: #4b5563;
+}
+
+.canvas-container {
+    flex: 1;
+    width: 100%;
+    height: 100%;
+    position: relative;
+}
+
+/* Stems Coordinates Monitor Panel */
+.card-monitor {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+}
+
+.stems-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    overflow-y: auto;
+    flex: 1;
+}
+
+.stem-item {
+    background-color: #1f2937;
+    border-radius: 8px;
+    padding: 12px 14px;
+    border: 1px solid #374151;
+}
+
+.stem-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.stem-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+}
+
+.stem-name {
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.stem-coords {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    font-size: 11px;
+    font-family: 'JetBrains Mono', monospace;
+    color: #d1d5db;
+}
+
+.stem-coords span {
+    font-weight: 700;
+    color: #7c3aed;
+}
+
+/* Color Coding for Stems */
+/* Vocals = Red/Pink */
+.stem-item.vocals { border-left: 4px solid #f43f5e; }
+.stem-item.vocals .stem-dot { background-color: #f43f5e; }
+.stem-item.vocals .stem-name { color: #f43f5e; }
+/* Drums = Orange/Yellow */
+.stem-item.drums { border-left: 4px solid #f59e0b; }
+.stem-item.drums .stem-dot { background-color: #f59e0b; }
+.stem-item.drums .stem-name { color: #f59e0b; }
+/* Bass = Green */
+.stem-item.bass { border-left: 4px solid #10b981; }
+.stem-item.bass .stem-dot { background-color: #10b981; }
+.stem-item.bass .stem-name { color: #10b981; }
+/* Other = Blue */
+.stem-item.other { border-left: 4px solid #3b82f6; }
+.stem-item.other .stem-dot { background-color: #3b82f6; }
+.stem-item.other .stem-name { color: #3b82f6; }

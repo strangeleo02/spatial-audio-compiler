@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Binaural Spatial Audio Mixer</title>
+    <link rel="stylesheet" href="/style.css">
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <!-- Three.js CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+    <div class="app-container">
+        <!-- Header -->
+        <header class="app-header">
+            <div class="header-logo">
+                <span class="logo-icon">🔊</span>
+                <div class="logo-text">
+                    <h1>3D Spatial Auditorium</h1>
+                    <p>Binaural Audio Mixer & Source Separator</p>
+                </div>
+            </div>
+            <div class="header-status">
+                <span id="status-dot" class="status-dot"></span>
+                <span id="status-text" class="status-text">Audio Engine Ready</span>
+            </div>
+        </header>
+
+        <!-- Main Workspace -->
+        <main class="app-workspace">
+            <!-- Left Panel: Controls -->
+            <section class="panel-left">
+                <!-- Card 1: File Separation -->
+                <div class="card card-upload">
+                    <h2>1. DEMUCS SEPARATION</h2>
+                    <p class="card-desc">Upload a song to separate into Vocals, Drums, Bass, and Instrumentals.</p>
+                    
+                    <form id="upload-form" class="upload-zone">
+                        <input type="file" id="audio-file" accept="audio/*" required>
+                        <label for="audio-file" id="file-label">
+                            <span class="upload-icon">📁</span>
+                            <span class="upload-title">Choose audio file</span>
+                            <span class="upload-subtitle">WAV, MP3, FLAC, M4A, OGG</span>
+                        </label>
+                        <button type="submit" id="btn-separate" class="btn btn-primary">⬡ Separate Stems</button>
+                    </form>
+
+                    <!-- Progress Indicator -->
+                    <div id="separation-progress" class="progress-container hidden">
+                        <div class="progress-header">
+                            <span class="progress-title">Separating stems...</span>
+                            <span id="progress-percent" class="progress-percent">0%</span>
+                        </div>
+                        <div class="progress-bar-bg">
+                            <div id="progress-bar-fill" class="progress-bar-fill"></div>
+                        </div>
+                        <p id="progress-status-msg" class="progress-status-msg">Loading Demucs model...</p>
+                    </div>
+                </div>
+
+                <!-- Card 2: Transport & Playback -->
+                <div class="card card-controls">
+                    <h2>2. PLAYBACK & MIX</h2>
+                    
+                    <div class="transport-buttons">
+                        <button id="btn-play" class="btn btn-success" disabled>▶ Play</button>
+                        <button id="btn-stop" class="btn btn-danger" disabled>■ Stop</button>
+                        <button id="btn-export" class="btn btn-secondary" disabled>Mix & Export</button>
+                    </div>
+
+                    <!-- Timeline Progress -->
+                    <div class="timeline-container">
+                        <input type="range" id="timeline-slider" min="0" max="100" value="0" disabled>
+                        <div class="time-labels">
+                            <span id="time-current">00:00</span>
+                            <span id="time-total">00:00</span>
+                        </div>
+                    </div>
+
+                    <!-- Master Volume -->
+                    <div class="volume-container">
+                        <span class="vol-icon">🔊</span>
+                        <label for="volume-slider">Master Volume</label>
+                        <input type="range" id="volume-slider" min="0" max="100" value="80">
+                        <span id="vol-percent" class="vol-percent">80%</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Center Panel: 3D Stage Viewport -->
+            <section class="panel-center">
+                <div class="stage-viewport-container">
+                    <div class="viewport-header">
+                        <h2>3D AUDITORIUM STAGE</h2>
+                        <div class="viewport-tips">
+                            <span>Drag spheres to move (X/Z plane)</span>
+                            <span class="separator">•</span>
+                            <span>Shift + Drag to change height (Y/Elevation)</span>
+                        </div>
+                    </div>
+                    <!-- WebGL Canvas Container -->
+                    <div id="canvas-container" class="canvas-container"></div>
+                </div>
+            </section>
+
+            <!-- Right Panel: Coordinate & Position Monitoring -->
+            <section class="panel-right">
+                <div class="card card-monitor">
+                    <h2>3. STEM POSITIONS</h2>
+                    <p class="card-desc">Real-time coordinates relative to the listener (at center 0, 0, 0).</p>
+                    
+                    <div class="stems-list">
+                        <!-- Vocals Monitor -->
+                        <div class="stem-item vocals" data-stem="vocals">
+                            <div class="stem-header">
+                                <span class="stem-dot"></span>
+                                <span class="stem-name">Vocals</span>
+                            </div>
+                            <div class="stem-coords">
+                                <div>Azimuth: <span id="coord-vocals-az">0°</span></div>
+                                <div>Elevation: <span id="coord-vocals-el">0°</span></div>
+                                <div>Distance: <span id="coord-vocals-dist">1.0m</span></div>
+                            </div>
+                        </div>
+
+                        <!-- Drums Monitor -->
+                        <div class="stem-item drums" data-stem="drums">
+                            <div class="stem-header">
+                                <span class="stem-dot"></span>
+                                <span class="stem-name">Drums</span>
+                            </div>
+                            <div class="stem-coords">
+                                <div>Azimuth: <span id="coord-drums-az">0°</span></div>
+                                <div>Elevation: <span id="coord-drums-el">0°</span></div>
+                                <div>Distance: <span id="coord-drums-dist">1.0m</span></div>
+                            </div>
+                        </div>
+
+                        <!-- Bass Monitor -->
+                        <div class="stem-item bass" data-stem="bass">
+                            <div class="stem-header">
+                                <span class="stem-dot"></span>
+                                <span class="stem-name">Bass</span>
+                            </div>
+                            <div class="stem-coords">
+                                <div>Azimuth: <span id="coord-bass-az">0°</span></div>
+                                <div>Elevation: <span id="coord-bass-el">0°</span></div>
+                                <div>Distance: <span id="coord-bass-dist">1.0m</span></div>
+                            </div>
+                        </div>
+
+                        <!-- Other Monitor -->
+                        <div class="stem-item other" data-stem="other">
+                            <div class="stem-header">
+                                <span class="stem-dot"></span>
+                                <span class="stem-name">Other Stems</span>
+                            </div>
+                            <div class="stem-coords">
+                                <div>Azimuth: <span id="coord-other-az">0°</span></div>
+                                <div>Elevation: <span id="coord-other-el">0°</span></div>
+                                <div>Distance: <span id="coord-other-dist">1.0m</span></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- App Logic -->
+    <script src="/app.js"></script>
+</body>
+</html>

@@ -15,3 +15,11 @@ env/
 # OS-specific files
 .DS_Store
 Thumbs.db
+
+# Project-specific builds and temporary files
+build/
+src/static/stems/
+*.so
+*.dylib
+*.egg-info/
+
