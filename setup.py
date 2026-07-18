@@ -7,7 +7,7 @@ ext_modules = [
         ['src/binaural_dsp.cpp'],
         include_dirs=[pybind11.get_include()],
         language='c++',
-        extra_compile_args=['/O2', '/std:c++17']
+        extra_compile_args=['/O2', '/std:c++17', '/arch:AVX2']
     ),
 ]
 

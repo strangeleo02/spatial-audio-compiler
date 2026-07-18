@@ -10,10 +10,16 @@ let stemsData = null;  // holds URLs of separated stems
 let audioBuffers = {}; // holds loaded AudioBuffers
 let sourceNodes = {};  // holds active AudioBufferSourceNodes
 let pannerNodes = {};  // holds active PannerNodes
+let stemGainNodes = {};// holds active stem GainNodes
 let startTime = 0;     // context time when playback started
 let pausedTime = 0;    // offset time if paused (seconds)
 let duration = 0;      // total length of audio tracks in seconds
 let progressInterval = null;
+
+// Mixer State (DAW-style)
+let stemVolumes = { vocals: 0.8, drums: 0.8, bass: 0.8, other: 0.8 };
+let stemMutes = { vocals: false, drums: false, bass: false, other: false };
+let stemSolos = { vocals: false, drums: false, bass: false, other: false };
 
 // Three.js State
 let scene, camera, renderer;
@@ -54,19 +60,17 @@ const INITIAL_POSITIONS = {
 function initAudio() {
     if (audioCtx) return;
     
-    // Create AudioContext (supports both Standard and Legacy browser implementations)
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
     audioCtx = new AudioContextClass();
     
     // Create Master Gain Node
     masterGain = audioCtx.createGain();
-    masterGain.gain.value = 0.8; // default volume matches master volume slider (80%)
+    masterGain.gain.value = 0.8; // default matches master volume slider (80%)
     masterGain.connect(audioCtx.destination);
     
     // Configure Listener orientation (Facing forward along -Z, Up along +Y)
     const listener = audioCtx.listener;
     if (listener.forwardX) {
-        // Modern Web Audio API
         listener.positionX.value = 0;
         listener.positionY.value = 0;
         listener.positionZ.value = 0;
@@ -77,7 +81,6 @@ function initAudio() {
         listener.upY.value = 1;
         listener.upZ.value = 0;
     } else {
-        // Legacy Web Audio API
         listener.setPosition(0, 0, 0);
         listener.setOrientation(0, 0, -1, 0, 1, 0);
     }
@@ -89,6 +92,29 @@ async function loadAudioBuffer(url) {
     return await audioCtx.decodeAudioData(arrayBuffer);
 }
 
+// Update calculated effective gains based on Volume, Mute, and Solo states
+function updateStemGains() {
+    if (!audioCtx) return;
+    
+    const hasSolo = activeStemsList.some(s => stemSolos[s]);
+    
+    activeStemsList.forEach(stem => {
+        const gainNode = stemGainNodes[stem];
+        if (!gainNode) return;
+        
+        let targetGain = stemVolumes[stem];
+        
+        if (stemMutes[stem]) {
+            targetGain = 0.0;
+        } else if (hasSolo && !stemSolos[stem]) {
+            targetGain = 0.0;
+        }
+        
+        // Prevent pops/clicks using smooth ramp
+        gainNode.gain.setTargetAtTime(targetGain, audioCtx.currentTime, 0.02);
+    });
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 //  Three.js 3D Visualizer Setup
 // ─────────────────────────────────────────────────────────────────────────────
@@ -98,22 +124,18 @@ function initThree() {
     const width = container.clientWidth;
     const height = container.clientHeight;
     
-    // 1. Create Scene
     scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x0f172a); // dark gray-blue background
+    scene.background = new THREE.Color(0x0f172a);
     
-    // 2. Create Camera
     camera = new THREE.PerspectiveCamera(50, width / height, 0.1, 100);
     camera.position.set(0, 8, 12);
     camera.lookAt(0, 0, 0);
     
-    // 3. Renderer
     renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(width, height);
     renderer.shadowMap.enabled = true;
     container.appendChild(renderer.domElement);
     
-    // 4. Lights
     const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
     scene.add(ambientLight);
     
@@ -122,28 +144,22 @@ function initThree() {
     dirLight.castShadow = true;
     scene.add(dirLight);
     
-    // 5. Grid helper representing stage floor
     const gridHelper = new THREE.GridHelper(20, 20, 0x7c3aed, 0x334155);
     gridHelper.position.y = -0.01;
     scene.add(gridHelper);
     
-    // 6. Draw Auditorium Stage Outline (arc representation)
     const stageGeo = new THREE.RingGeometry(0.1, 10, 32, 1, 0, Math.PI * 2);
     const stageMat = new THREE.MeshBasicMaterial({ color: 0x1e293b, side: THREE.DoubleSide, opacity: 0.15, transparent: true });
     const stageMesh = new THREE.Mesh(stageGeo, stageMat);
     stageMesh.rotation.x = Math.PI / 2;
     scene.add(stageMesh);
 
-    // 7. Listener Mesh in center (Head + Nose/Direction pointer)
     const listenerGroup = new THREE.Group();
-    
-    // Head sphere
     const headGeo = new THREE.SphereGeometry(0.6, 32, 32);
     const headMat = new THREE.MeshStandardMaterial({ color: 0x94a3b8, roughness: 0.5 });
     const headMesh = new THREE.Mesh(headGeo, headMat);
     listenerGroup.add(headMesh);
     
-    // Nose pointer to show facing direction (-Z)
     const noseGeo = new THREE.ConeGeometry(0.15, 0.4, 4);
     const noseMat = new THREE.MeshBasicMaterial({ color: 0xef4444 });
     const noseMesh = new THREE.Mesh(noseGeo, noseMat);
@@ -153,14 +169,13 @@ function initThree() {
 
     scene.add(listenerGroup);
     
-    // 8. Stem meshes (Draggable spheres)
     activeStemsList.forEach(stem => {
         const group = new THREE.Group();
         const pos = INITIAL_POSITIONS[stem];
         group.position.set(pos.x, pos.y, pos.z);
         group.name = stem;
         
-        // Sphere represent source
+        // Sphere representing source
         const sphereGeo = new THREE.SphereGeometry(0.4, 32, 32);
         const sphereMat = new THREE.MeshStandardMaterial({
             color: STEM_COLORS[stem],
@@ -173,6 +188,19 @@ function initThree() {
         sphereMesh.castShadow = true;
         group.add(sphereMesh);
         
+        // Glowing visual 3D sound waves ring
+        const waveGeo = new THREE.RingGeometry(0.4, 0.45, 32);
+        const waveMat = new THREE.MeshBasicMaterial({
+            color: STEM_COLORS[stem],
+            side: THREE.DoubleSide,
+            opacity: 0.0,
+            transparent: true
+        });
+        const waveMesh = new THREE.Mesh(waveGeo, waveMat);
+        waveMesh.rotation.x = Math.PI / 2;
+        waveMesh.name = "wave";
+        group.add(waveMesh);
+        
         // Little light indicator above it
         const beaconGeo = new THREE.BoxGeometry(0.05, 0.2, 0.05);
         const beaconMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
@@ -183,11 +211,9 @@ function initThree() {
         scene.add(group);
         stemMeshes[stem] = group;
         
-        // Push initial updates to GUI monitors
         updateUIMonitor(stem, pos.x, pos.y, pos.z);
     });
 
-    // 9. Resize handler
     window.addEventListener("resize", () => {
         const w = container.clientWidth;
         const h = container.clientHeight;
@@ -196,25 +222,44 @@ function initThree() {
         renderer.setSize(w, h);
     });
     
-    // Start Animation/Render loop
     animate();
 }
 
 function animate() {
     requestAnimationFrame(animate);
     
-    // Render loop animation cues (e.g. pulse active stems slightly when playing)
-    if (isPlaying) {
-        const time = Date.now() * 0.005;
-        activeStemsList.forEach(stem => {
-            const mesh = stemMeshes[stem];
-            if (mesh) {
-                // Subtle breathing animation
-                const scale = 1.0 + Math.sin(time + INITIAL_POSITIONS[stem].x) * 0.05;
-                mesh.children[0].scale.set(scale, scale, scale);
+    const hasSolo = activeStemsList.some(s => stemSolos[s]);
+
+    activeStemsList.forEach(stem => {
+        const mesh = stemMeshes[stem];
+        if (!mesh) return;
+
+        const wave = mesh.getObjectByName("wave");
+        if (!wave) return;
+
+        const isSilent = stemMutes[stem] || (hasSolo && !stemSolos[stem]);
+
+        if (isPlaying && !isSilent) {
+            // Pulse source sphere breathing size
+            const time = Date.now() * 0.005;
+            const scale = 1.0 + Math.sin(time + INITIAL_POSITIONS[stem].x) * 0.05;
+            mesh.children[0].scale.set(scale, scale, scale);
+
+            // Expand and fade out the sound wave ring
+            wave.scale.addScalar(0.03);
+            wave.material.opacity -= 0.015;
+
+            if (wave.material.opacity <= 0) {
+                wave.scale.set(1, 1, 1);
+                wave.material.opacity = 0.7; // restart loop
             }
-        });
-    }
+        } else {
+            // Reset state
+            mesh.children[0].scale.set(1, 1, 1);
+            wave.scale.set(1, 1, 1);
+            wave.material.opacity = 0.0;
+        }
+    });
 
     renderer.render(scene, camera);
 }
@@ -224,26 +269,15 @@ function animate() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function updateUIMonitor(stem, x, y, z) {
-    // Web Audio coordinates map directly to Three.js coordinates:
-    // Left/Right = X axis
-    // Up/Down = Y axis
-    // Front/Back = Z axis (Three.js -Z is front, +Z is back)
-    
-    // Azimuth calculation relative to front (-Z)
-    // angle = Math.atan2(X, -Z)
     let azimuthRad = Math.atan2(x, -z);
     let azimuthDeg = Math.round(azimuthRad * 180 / Math.PI);
     
-    // Elevation calculation
-    // angle = Math.atan2(Y, Math.sqrt(X^2 + Z^2))
     let horizontalDist = Math.sqrt(x*x + z*z);
     let elevationRad = Math.atan2(y, horizontalDist);
     let elevationDeg = Math.round(elevationRad * 180 / Math.PI);
     
-    // Distance
     let dist = Math.sqrt(x*x + y*y + z*z).toFixed(1);
 
-    // Update labels
     let azTxt = azimuthDeg === 0 ? "0° (Front)" : (azimuthDeg > 0 ? `${azimuthDeg}° (Right)` : `${Math.abs(azimuthDeg)}° (Left)`);
     let elTxt = elevationDeg === 0 ? "0° (Level)" : (elevationDeg > 0 ? `+${elevationDeg}° (Up)` : `${elevationDeg}° (Down)`);
 
@@ -252,18 +286,15 @@ function updateUIMonitor(stem, x, y, z) {
     document.getElementById(`coord-${stem}-dist`).innerText = `${dist}m`;
 }
 
-// Update PannerNode positions live
 function updatePannerPosition(stem, x, y, z) {
     const panner = pannerNodes[stem];
     if (!panner) return;
     
-    // Set parameters (handles immediate interpolation)
     if (panner.positionX) {
         panner.positionX.value = x;
         panner.positionY.value = y;
         panner.positionZ.value = z;
     } else {
-        // Fallback for older browsers
         panner.setPosition(x, y, z);
     }
 }
@@ -288,15 +319,12 @@ function getMousePosition(event) {
 
 function onMouseDown(event) {
     getMousePosition(event);
-    
     raycaster.setFromCamera(mouse, camera);
     
-    // Check if we hit any of our stem mesh groups
     const targets = activeStemsList.map(s => stemMeshes[s]);
     const intersects = raycaster.intersectObjects(targets, true);
     
     if (intersects.length > 0) {
-        // Find the top-level group node
         let obj = intersects[0].object;
         while (obj.parent && obj.parent !== scene) {
             obj = obj.parent;
@@ -305,11 +333,9 @@ function onMouseDown(event) {
         selectedStem = obj.name;
         isDragging = true;
         
-        // Highlight active card border slightly
         document.querySelectorAll('.stem-item').forEach(el => el.classList.remove('active'));
         document.querySelector(`.stem-item.${selectedStem}`).classList.add('active');
         
-        // Capture initial offset plane intersection
         raycaster.ray.intersectPlane(planeXZ, intersectionPoint);
     }
 }
@@ -323,28 +349,22 @@ function onMouseMove(event) {
     const mesh = stemMeshes[selectedStem];
     
     if (shiftPressed) {
-        // Drag up/down along Y-axis (Elevation)
-        // Set up vertical plane facing camera to intersect ray
         const cameraNormal = new THREE.Vector3();
         camera.getWorldDirection(cameraNormal);
-        cameraNormal.y = 0; // lock to horizontal normal
+        cameraNormal.y = 0;
         cameraNormal.normalize();
         
         const planeY = new THREE.Plane(cameraNormal, -mesh.position.dot(cameraNormal));
         if (raycaster.ray.intersectPlane(planeY, intersectionPoint)) {
-            // Clamp elevation range to [-5m, 5m] for physical sound elevation
             mesh.position.y = THREE.MathUtils.clamp(intersectionPoint.y, -5, 5);
         }
     } else {
-        // Normal drag along Stage Floor X-Z plane
         if (raycaster.ray.intersectPlane(planeXZ, intersectionPoint)) {
-            // Distance limit of 10m from center listener
             const distance = Math.sqrt(intersectionPoint.x * intersectionPoint.x + intersectionPoint.z * intersectionPoint.z);
             if (distance <= 10.0) {
                 mesh.position.x = intersectionPoint.x;
                 mesh.position.z = intersectionPoint.z;
             } else {
-                // Project onto boundary edge
                 const angle = Math.atan2(intersectionPoint.z, intersectionPoint.x);
                 mesh.position.x = Math.cos(angle) * 10.0;
                 mesh.position.z = Math.sin(angle) * 10.0;
@@ -352,7 +372,6 @@ function onMouseMove(event) {
         }
     }
     
-    // Update live coordinates in monitor labels and Audio engine
     updateUIMonitor(selectedStem, mesh.position.x, mesh.position.y, mesh.position.z);
     updatePannerPosition(selectedStem, mesh.position.x, mesh.position.y, mesh.position.z);
 }
@@ -375,7 +394,6 @@ const progressPercent = document.getElementById("progress-percent");
 const progressStatusMsg = document.getElementById("progress-status-msg");
 const btnSeparate = document.getElementById("btn-separate");
 
-// Show filename on select
 fileInput.addEventListener("change", () => {
     if (fileInput.files.length > 0) {
         fileLabel.innerHTML = `
@@ -390,14 +408,11 @@ uploadForm.addEventListener("submit", async (e) => {
     e.preventDefault();
     if (fileInput.files.length === 0) return;
     
-    // Initialize Web Audio early due to browser security restrictions on click events
     initAudio();
     
-    // Disable inputs
     fileInput.disabled = true;
     btnSeparate.disabled = true;
     
-    // Reset and show progress bar
     sepProgress.classList.remove("hidden");
     progressBarFill.style.width = "0%";
     progressPercent.innerText = "0%";
@@ -405,12 +420,10 @@ uploadForm.addEventListener("submit", async (e) => {
     const formData = new FormData();
     formData.append("file", fileInput.files[0]);
     
-    // Start progress simulation (polling would be ideal, but since FastAPI blocks thread
-    // for local Demucs separation, we mock an optimistic progress curve and hook completion)
     let simulatedProgress = 0;
     const progressTimer = setInterval(() => {
         if (simulatedProgress < 90) {
-            simulatedProgress += (1.0 / (simulatedProgress * 0.15 + 1)) * 3; // slows down as it gets closer
+            simulatedProgress += (1.0 / (simulatedProgress * 0.15 + 1)) * 3;
             const roundedVal = Math.round(simulatedProgress);
             progressBarFill.style.width = `${roundedVal}%`;
             progressPercent.innerText = `${roundedVal}%`;
@@ -441,15 +454,12 @@ uploadForm.addEventListener("submit", async (e) => {
         const data = await response.json();
         stemsData = data.stems;
         
-        // Update progress bar to 100%
         progressBarFill.style.width = "100%";
         progressPercent.innerText = "100%";
         progressStatusMsg.innerText = "Stem separation complete!";
         
-        // Hide progress card after delay
         setTimeout(() => sepProgress.classList.add("hidden"), 3000);
         
-        // Download and decode tracks into AudioBuffers
         await loadAllStems();
         
     } catch (err) {
@@ -478,10 +488,8 @@ async function loadAllStems() {
             audioBuffers[stem] = await loadAudioBuffer(url);
         }
         
-        // Get longest stem duration
         duration = Math.max(...activeStemsList.map(s => audioBuffers[s].duration));
         
-        // Setup UI limits
         document.getElementById("timeline-slider").disabled = false;
         document.getElementById("timeline-slider").max = duration;
         document.getElementById("time-total").innerText = formatTime(duration);
@@ -489,17 +497,17 @@ async function loadAllStems() {
         
         document.getElementById("btn-play").disabled = false;
         document.getElementById("btn-stop").disabled = false;
+        document.getElementById("btn-export").disabled = false;
         
         document.getElementById("status-text").innerText = "All stems loaded successfully";
         document.getElementById("status-dot").classList.remove("loading");
         
-        // Update HTML monitor track names
         activeStemsList.forEach(stem => {
             const filename = fileInput.files[0].name;
             document.getElementById(`file-label`).innerHTML = "Choose audio file";
             fileInput.disabled = false;
             btnSeparate.disabled = false;
-            // Update labels
+            
             const monitorLabel = document.querySelector(`.stem-item.${stem} .stem-name`);
             monitorLabel.innerHTML = `${stem.charAt(0).toUpperCase() + stem.slice(1)} <span style="font-size: 10px; font-weight:normal; color:#64748b">(${filename})</span>`;
         });
@@ -511,14 +519,12 @@ async function loadAllStems() {
     }
 }
 
-// Start playing all source nodes simultaneously
 function playStems(offset = 0) {
     initAudio();
     if (audioCtx.state === 'suspended') {
         audioCtx.resume();
     }
     
-    // Stop any currently running sources
     stopActiveSourceNodes();
     
     startTime = audioCtx.currentTime - offset;
@@ -528,11 +534,9 @@ function playStems(offset = 0) {
         const buffer = audioBuffers[stem];
         if (!buffer) return;
         
-        // 1. Create Buffer Source
         const source = audioCtx.createBufferSource();
         source.buffer = buffer;
         
-        // 2. Create PannerNode for 3D HRTF
         const panner = audioCtx.createPanner();
         panner.panningModel = 'HRTF';
         panner.distanceModel = 'inverse';
@@ -540,7 +544,6 @@ function playStems(offset = 0) {
         panner.maxDistance = 10.0;
         panner.rolloffFactor = 1.0;
         
-        // Apply position from Three.js scene
         const mesh = stemMeshes[stem];
         if (panner.positionX) {
             panner.positionX.value = mesh.position.x;
@@ -550,21 +553,24 @@ function playStems(offset = 0) {
             panner.setPosition(mesh.position.x, mesh.position.y, mesh.position.z);
         }
         
-        // 3. Connect routing chain
-        source.connect(panner);
-        panner.connect(masterGain);
+        // Create per-stem GainNode to drive Mute/Solo and Volume
+        const stemGain = audioCtx.createGain();
         
-        // Start buffer
+        source.connect(panner);
+        panner.connect(stemGain);
+        stemGain.connect(masterGain);
+        
         source.start(0, offset);
         
         sourceNodes[stem] = source;
         pannerNodes[stem] = panner;
+        stemGainNodes[stem] = stemGain;
     });
+    
+    updateStemGains();
     
     isPlaying = true;
     document.getElementById("btn-play").innerText = "⏸ Pause";
-    
-    // Timeline refresh interval
     progressInterval = setInterval(updateTimeline, 200);
 }
 
@@ -597,6 +603,8 @@ function stopActiveSourceNodes() {
             try { source.stop(); } catch(e) {}
             delete sourceNodes[stem];
         }
+        delete pannerNodes[stem];
+        delete stemGainNodes[stem];
     });
 }
 
@@ -620,11 +628,152 @@ function formatTime(sec) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  UI Controls Bindings
+//  Offline Render Mix & Export Logic
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function exportMix() {
+    if (!stemsData || duration <= 0) return;
+    
+    pauseStems();
+    
+    document.getElementById("status-text").innerText = "Rendering 3D mixdown offline...";
+    document.getElementById("status-dot").classList.add("loading");
+    
+    // Create Offline Context
+    const offlineCtx = new OfflineAudioContext(2, duration * 44100, 44100);
+    
+    // Create Master Gain
+    const offlineMasterGain = offlineCtx.createGain();
+    offlineMasterGain.gain.value = masterGain ? masterGain.gain.value : 0.8;
+    offlineMasterGain.connect(offlineCtx.destination);
+    
+    const hasSolo = activeStemsList.some(s => stemSolos[s]);
+    
+    activeStemsList.forEach(stem => {
+        const buffer = audioBuffers[stem];
+        if (!buffer) return;
+        
+        const source = offlineCtx.createBufferSource();
+        source.buffer = buffer;
+        
+        const panner = offlineCtx.createPanner();
+        panner.panningModel = 'HRTF';
+        panner.distanceModel = 'inverse';
+        panner.refDistance = 1.0;
+        panner.maxDistance = 10.0;
+        panner.rolloffFactor = 1.0;
+        
+        const mesh = stemMeshes[stem];
+        panner.positionX.value = mesh.position.x;
+        panner.positionY.value = mesh.position.y;
+        panner.positionZ.value = mesh.position.z;
+        
+        // Calculate Offline Stem Gain
+        const stemGain = offlineCtx.createGain();
+        let targetGain = stemVolumes[stem];
+        if (stemMutes[stem] || (hasSolo && !stemSolos[stem])) {
+            targetGain = 0.0;
+        }
+        stemGain.gain.value = targetGain;
+        
+        source.connect(panner);
+        panner.connect(stemGain);
+        stemGain.connect(offlineMasterGain);
+        
+        source.start(0);
+    });
+    
+    try {
+        const renderedBuffer = await offlineCtx.startRendering();
+        document.getElementById("status-text").innerText = "Encoding WAV file...";
+        
+        const wavBlob = bufferToWav(renderedBuffer);
+        
+        // Trigger client-side download
+        const url = URL.createObjectURL(wavBlob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "3d_spatial_mix.wav";
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        
+        document.getElementById("status-text").innerText = "Export successful!";
+        document.getElementById("status-dot").classList.remove("loading");
+        
+        setTimeout(() => {
+            document.getElementById("status-text").innerText = "Audio Engine Ready";
+        }, 3000);
+        
+    } catch(err) {
+        console.error(err);
+        alert(`Export failed: ${err.message}`);
+        document.getElementById("status-text").innerText = "Export failed";
+        document.getElementById("status-dot").classList.remove("loading");
+    }
+}
+
+// Convert AudioBuffer to 16-bit stereo WAV Blob
+function bufferToWav(buffer) {
+    let numOfChan = buffer.numberOfChannels,
+        length = buffer.length * numOfChan * 2 + 44,
+        bufferArr = new ArrayBuffer(length),
+        view = new DataView(bufferArr),
+        channels = [], i, sample,
+        offset = 0,
+        pos = 0;
+
+    // write headers
+    setUint32(0x46464952);                         // "RIFF"
+    setUint32(length - 8);                         // file length - 8
+    setUint32(0x45564157);                         // "WAVE"
+
+    setUint32(0x20746d66);                         // "fmt " chunk
+    setUint32(16);                                 // chunk length
+    setUint16(1);                                  // sample format (raw PCM)
+    setUint16(numOfChan);                          // channel count
+    setUint32(buffer.sampleRate);                  // sample rate
+    setUint32(buffer.sampleRate * 2 * numOfChan);  // byte rate
+    setUint16(numOfChan * 2);                      // block align
+    setUint16(16);                                 // bits per sample
+
+    setUint32(0x61746164);                         // "data" chunk
+    setUint32(buffer.length * numOfChan * 2);      // chunk length
+
+    for(i=0; i<buffer.numberOfChannels; i++)
+        channels.push(buffer.getChannelData(i));
+
+    while(pos < buffer.length) {
+        for(i=0; i<numOfChan; i++) {
+            sample = Math.max(-1, Math.min(1, channels[i][pos]));
+            sample = (sample < 0 ? sample * 0x8000 : sample * 0x7FFF);
+            view.setInt16(44 + offset, sample, true);
+            offset += 2;
+        }
+        pos++;
+    }
+
+    return new Blob([bufferArr], {type: "audio/wav"});
+
+    function setUint16(data) {
+        view.setUint16(44 - 44 + offset, data, true);
+        offset += 2;
+    }
+
+    function setUint32(data) {
+        view.setUint32(44 - 44 + offset, data, true);
+        offset += 4;
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  UI Controls & Mixer Bindings
 // ─────────────────────────────────────────────────────────────────────────────
 
 const btnPlay = document.getElementById("btn-play");
 const btnStop = document.getElementById("btn-stop");
+const btnExport = document.getElementById("btn-export");
 const volSlider = document.getElementById("volume-slider");
 const volPercent = document.getElementById("vol-percent");
 const timelineSlider = document.getElementById("timeline-slider");
@@ -639,6 +788,10 @@ btnPlay.addEventListener("click", () => {
 
 btnStop.addEventListener("click", () => {
     stopStems();
+});
+
+btnExport.addEventListener("click", () => {
+    exportMix();
 });
 
 volSlider.addEventListener("input", () => {
@@ -663,7 +816,34 @@ timelineSlider.addEventListener("change", () => {
     }
 });
 
-// Launch visualizer scene on window load
+// Configure Solo/Mute/Volume callbacks for each stem in right mixer panel
+activeStemsList.forEach(stem => {
+    const sBtn = document.getElementById(`solo-${stem}`);
+    const mBtn = document.getElementById(`mute-${stem}`);
+    const vSld = document.getElementById(`vol-${stem}`);
+    const vPct = document.getElementById(`vol-pct-${stem}`);
+
+    sBtn.addEventListener("click", () => {
+        stemSolos[stem] = !stemSolos[stem];
+        sBtn.classList.toggle("active", stemSolos[stem]);
+        updateStemGains();
+    });
+
+    mBtn.addEventListener("click", () => {
+        stemMutes[stem] = !stemMutes[stem];
+        mBtn.classList.toggle("active", stemMutes[stem]);
+        updateStemGains();
+    });
+
+    vSld.addEventListener("input", () => {
+        const val = vSld.value;
+        vPct.innerText = `${val}%`;
+        stemVolumes[stem] = val / 100;
+        updateStemGains();
+    });
+});
+
+// Load Visualizer on layout mount
 window.addEventListener("DOMContentLoaded", () => {
     initThree();
 });

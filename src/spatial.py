@@ -19,8 +19,10 @@ import threading
 import tempfile
 import shutil
 import glob
-
 import sys
+import urllib.request
+import scipy.io
+import scipy.signal
 
 # ── Dynamic Path Configuration ────────────────────────────────────────────────
 # Ensure the root folder (where setup.py compiles the .pyd) is in the search path.
@@ -152,10 +154,15 @@ class SpatialAudioMixerApp(ctk.CTk):
         ]
 
         self._demucs_tmpdir = None
+        self.hrir_l = None
+        self.hrir_r = None
 
         # ── Build GUI ───────────────────────────────────────────────
         self.create_widgets()
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
+
+        # ── Load KEMAR CIPIC Database ───────────────────────────────
+        self.load_kemar_async()
 
     def create_widgets(self):
         # Background / Main Container
@@ -483,6 +490,109 @@ class SpatialAudioMixerApp(ctk.CTk):
             text_color="#64748b"
         )
         self.status_lbl.pack(side="bottom", pady=8)
+
+    # ══════════════════════════════════════════════════════════════════════
+    #  KEMAR CIPIC HRTF Dataset Loading
+    # ══════════════════════════════════════════════════════════════════════
+    def load_kemar_async(self):
+        self._set_controls_state("disabled")
+        threading.Thread(target=self._load_kemar_thread, daemon=True).start()
+
+    def _load_kemar_thread(self):
+        url = "https://raw.githubusercontent.com/amini-allight/cipic-hrtf-database/master/standard_hrir_database/subject_021/hrir_final.mat"
+        dest_dir = os.path.join(_REPO_ROOT, "data")
+        dest_path = os.path.join(dest_dir, "subject_021.mat")
+        
+        self.after(0, lambda: self.status_lbl.configure(
+            text="Checking KEMAR HRTF dataset...",
+            text_color=self.COLOR_WARNING
+        ))
+
+        try:
+            if not os.path.exists(dest_path):
+                self.after(0, lambda: self.status_lbl.configure(
+                    text="Downloading KEMAR HRTF dataset (~5.5 MB)...",
+                    text_color=self.COLOR_WARNING
+                ))
+                os.makedirs(dest_dir, exist_ok=True)
+                
+                # Download with progress updates
+                req = urllib.request.Request(
+                    url, 
+                    headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+                )
+                with urllib.request.urlopen(req) as response:
+                    total_size = int(response.info().get('Content-Length', 0))
+                    downloaded = 0
+                    block_size = 8192
+                    with open(dest_path, 'wb') as f:
+                        while True:
+                            buffer = response.read(block_size)
+                            if not buffer:
+                                break
+                            downloaded += len(buffer)
+                            f.write(buffer)
+                            if total_size:
+                                percent = int(downloaded * 100 / total_size)
+                                self.after(0, lambda p=percent: self.status_lbl.configure(
+                                    text=f"Downloading KEMAR HRTF dataset: {p}%...",
+                                    text_color=self.COLOR_WARNING
+                                ))
+
+            self.after(0, lambda: self.status_lbl.configure(
+                text="Loading KEMAR dataset standard matrices...",
+                text_color=self.COLOR_WARNING
+            ))
+
+            mat = scipy.io.loadmat(dest_path)
+            # CIPIC matrices shape is (25, 50, 200)
+            hrir_l = mat['hrir_l']
+            hrir_r = mat['hrir_r']
+            
+            # Check for resampling if target rate is not 44.1 kHz
+            # (CIPIC original is 44.1 kHz, length 200)
+            target_sr = 44100
+            
+            self.hrir_l = np.ascontiguousarray(hrir_l, dtype=np.float64)
+            self.hrir_r = np.ascontiguousarray(hrir_r, dtype=np.float64)
+
+            # Load into active processors
+            with self.lock:
+                for proc in self.dsp_processors:
+                    proc.load_hrir_database(self.hrir_l, self.hrir_r)
+
+            self.after(0, self.on_kemar_loaded)
+
+        except Exception as e:
+            print(f"[Error] Failed to load KEMAR CIPIC database: {e}")
+            # Fallback to bypass / dummy HRIRs (Identity Impulse Response)
+            dummy_l = np.zeros((25, 50, 200), dtype=np.float64)
+            dummy_r = np.zeros((25, 50, 200), dtype=np.float64)
+            dummy_l[:, :, 0] = 1.0
+            dummy_r[:, :, 0] = 1.0
+
+            self.hrir_l = dummy_l
+            self.hrir_r = dummy_r
+
+            with self.lock:
+                for proc in self.dsp_processors:
+                    proc.load_hrir_database(self.hrir_l, self.hrir_r)
+
+            self.after(0, lambda: self.status_lbl.configure(
+                text="KEMAR database error! Falling back to standard bypass panning.",
+                text_color=self.COLOR_DANGER
+            ))
+            self.after(2000, self.on_kemar_loaded)
+
+    def on_kemar_loaded(self):
+        self._set_controls_state("normal")
+        # Keep play/stop disabled if no tracks are loaded yet
+        if not self.tracks:
+            self.play_btn.configure(state="disabled")
+            self.stop_btn.configure(state="disabled")
+            self.status_lbl.configure(text="Ready. Select a song file or load 4 manual stems.", text_color="#64748b")
+        else:
+            self.status_lbl.configure(text="Mixer ready. Click Play.", text_color=self.COLOR_SUCCESS)
 
     # ══════════════════════════════════════════════════════════════════════
     #  Demucs Separation Workflow
@@ -826,6 +936,8 @@ class SpatialAudioMixerApp(ctk.CTk):
             render_processors = [binaural_dsp.BinauralProcessor(44100.0) for _ in range(4)]
             with self.lock:
                 for idx, pos in enumerate(self.track_positions):
+                    if self.hrir_l is not None and self.hrir_r is not None:
+                        render_processors[idx].load_hrir_database(self.hrir_l, self.hrir_r)
                     render_processors[idx].set_position(
                         pos["azimuth"], pos["elevation"], pos["distance"]
                     )
