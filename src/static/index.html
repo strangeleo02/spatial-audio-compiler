@@ -88,6 +88,73 @@
                         <span id="vol-percent" class="vol-percent">80%</span>
                     </div>
                 </div>
+
+                </div>
+
+                <!-- Card 3: Theater & Room Acoustics -->
+                <div class="card card-theater">
+                    <h2>3. THEATER & ROOM ACOUSTICS</h2>
+                    <p class="card-desc">Select room architecture and configure wall acoustic reflections.</p>
+                    
+                    <div class="setting-item">
+                        <label for="select-theater">Theater Environment</label>
+                        <select id="select-theater" class="settings-select">
+                            <option value="small_room">🛋️ Small Studio Room (6x6x3m)</option>
+                            <option value="theater" selected>🎭 Medium Theater (16x20x7m)</option>
+                            <option value="symphony">🏛️ Symphony Hall (28x36x12m)</option>
+                            <option value="cathedral">⛪ Grand Cathedral (40x60x20m)</option>
+                        </select>
+                    </div>
+
+                    <div class="acoustics-toggle-grid">
+                        <label class="toggle-container">
+                            <input type="checkbox" id="toggle-reflections" checked>
+                            <span class="toggle-slider"></span>
+                            <span class="toggle-label">Wall Reflections</span>
+                        </label>
+
+                        <label class="toggle-container">
+                            <input type="checkbox" id="toggle-rays" checked>
+                            <span class="toggle-slider"></span>
+                            <span class="toggle-label">Show Sound Rays</span>
+                        </label>
+                    </div>
+
+                    <div class="slider-row">
+                        <label for="reverb-wet-slider">Room Reverb Mix: <span id="reverb-wet-val">30%</span></label>
+                        <input type="range" id="reverb-wet-slider" min="0" max="100" value="30">
+                    </div>
+
+                    <div class="slider-row">
+                        <label for="wall-damping-slider">Wall Absorption: <span id="wall-damping-val">40%</span></label>
+                        <input type="range" id="wall-damping-slider" min="5" max="95" value="40">
+                    </div>
+                </div>
+
+                <!-- Card 4: Audio & DSP Settings -->
+                <div class="card card-settings">
+                    <h2>4. AUDIO & DSP SETTINGS</h2>
+                    <div class="settings-grid">
+                        <div class="setting-item">
+                            <label for="select-blocksize">DSP Block Size</label>
+                            <select id="select-blocksize" class="settings-select">
+                                <option value="256">256 frames</option>
+                                <option value="512">512 frames</option>
+                                <option value="1024" selected>1024 frames (Default)</option>
+                                <option value="2048">2048 frames</option>
+                                <option value="4096">4096 frames</option>
+                            </select>
+                        </div>
+                        <div class="setting-item">
+                            <label for="select-bitdepth">Export Format</label>
+                            <select id="select-bitdepth" class="settings-select">
+                                <option value="pcm16" selected>PCM 16-bit WAV</option>
+                                <option value="pcm24">PCM 24-bit WAV</option>
+                                <option value="float32">Float 32-bit WAV</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
             </section>
 
             <!-- Center Panel: 3D Stage Viewport -->
@@ -96,20 +163,46 @@
                     <div class="viewport-header">
                         <h2>3D AUDITORIUM STAGE</h2>
                         <div class="viewport-tips">
-                            <span>Drag spheres to move (X/Z plane)</span>
+                            <span>🎮 WASD: Move Listener</span>
                             <span class="separator">•</span>
-                            <span>Shift + Drag to change height (Y/Elevation)</span>
+                            <span>🔊 Click & Drag Speaker: Pick & Place</span>
+                            <span class="separator">•</span>
+                            <span>Shift + Drag: Height</span>
                         </div>
                     </div>
-                    <!-- WebGL Canvas Container -->
-                    <div id="canvas-container" class="canvas-container"></div>
+                    <!-- WebGL Canvas Container with HUD Overlay -->
+                    <div id="canvas-container" class="canvas-container">
+                        <!-- WASD HUD Overlay -->
+                        <div class="wasd-hud">
+                            <div class="hud-badge">
+                                <span class="hud-title">WASD CONTROLS</span>
+                                <div class="wasd-keys-diagram">
+                                    <div class="key-row"><span class="key-cap">W</span></div>
+                                    <div class="key-row">
+                                        <span class="key-cap">A</span>
+                                        <span class="key-cap">S</span>
+                                        <span class="key-cap">D</span>
+                                    </div>
+                                    <div class="key-row subkeys">
+                                        <span class="key-cap mini">Q</span> <span class="key-label">Down</span>
+                                        <span class="key-cap mini">E</span> <span class="key-label">Up</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="listener-info-badge">
+                                <div class="info-row"><strong>Listener Pos:</strong> <span id="hud-listener-pos">(0.0, 0.0, 0.0)</span></div>
+                                <div class="info-row"><strong>Heading:</strong> <span id="hud-listener-heading">0° (Forward)</span></div>
+                                <div class="info-row"><strong>Theater:</strong> <span id="hud-theater-name">Medium Theater</span></div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </section>
 
             <!-- Right Panel: Coordinate & Position Monitoring -->
             <section class="panel-right">
                 <div class="card card-monitor">
-                    <h2>3. STEM POSITIONS</h2>
+                    <h2>4. STEM POSITIONS</h2>
                     <p class="card-desc">Real-time coordinates relative to the listener (at center 0, 0, 0).</p>
                     
                     <div class="stems-list">
@@ -130,6 +223,11 @@
                                 <input type="range" class="stem-vol" id="vol-vocals" min="0" max="100" value="80">
                                 <span class="stem-vol-pct" id="vol-pct-vocals">80%</span>
                             </div>
+                            <div class="stem-tone-row">
+                                <span class="tone-label">Tone EQ</span>
+                                <input type="range" class="stem-tone" id="tone-vocals" min="200" max="20000" value="20000">
+                                <span class="stem-tone-pct" id="tone-pct-vocals">20.0kHz</span>
+                            </div>
                         </div>
 
                         <!-- Drums Monitor -->
@@ -148,6 +246,11 @@
                                 <button type="button" class="btn-mute" id="mute-drums">M</button>
                                 <input type="range" class="stem-vol" id="vol-drums" min="0" max="100" value="80">
                                 <span class="stem-vol-pct" id="vol-pct-drums">80%</span>
+                            </div>
+                            <div class="stem-tone-row">
+                                <span class="tone-label">Tone EQ</span>
+                                <input type="range" class="stem-tone" id="tone-drums" min="200" max="20000" value="20000">
+                                <span class="stem-tone-pct" id="tone-pct-drums">20.0kHz</span>
                             </div>
                         </div>
 
@@ -168,6 +271,11 @@
                                 <input type="range" class="stem-vol" id="vol-bass" min="0" max="100" value="80">
                                 <span class="stem-vol-pct" id="vol-pct-bass">80%</span>
                             </div>
+                            <div class="stem-tone-row">
+                                <span class="tone-label">Tone EQ</span>
+                                <input type="range" class="stem-tone" id="tone-bass" min="200" max="20000" value="20000">
+                                <span class="stem-tone-pct" id="tone-pct-bass">20.0kHz</span>
+                            </div>
                         </div>
 
                         <!-- Other Monitor -->
@@ -186,6 +294,11 @@
                                 <button type="button" class="btn-mute" id="mute-other">M</button>
                                 <input type="range" class="stem-vol" id="vol-other" min="0" max="100" value="80">
                                 <span class="stem-vol-pct" id="vol-pct-other">80%</span>
+                            </div>
+                            <div class="stem-tone-row">
+                                <span class="tone-label">Tone EQ</span>
+                                <input type="range" class="stem-tone" id="tone-other" min="200" max="20000" value="20000">
+                                <span class="stem-tone-pct" id="tone-pct-other">20.0kHz</span>
                             </div>
                         </div>
                     </div>
