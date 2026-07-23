@@ -1,6 +1,41 @@
 // ─────────────────────────────────────────────────────────────────────────────
-//  3D Binaural Spatial Audio Mixer — Theater, WASD & Acoustic Engine
+//  Structured Frontend Logger Engine (Console & Live UI Output)
 // ─────────────────────────────────────────────────────────────────────────────
+const Logger = {
+    logs: [],
+    maxLogs: 150,
+    info(msg, ...args) { this._emit('INFO', msg, '#38bdf8', ...args); },
+    success(msg, ...args) { this._emit('SUCCESS', msg, '#10b981', ...args); },
+    warn(msg, ...args) { this._emit('WARN', msg, '#f59e0b', ...args); },
+    error(msg, ...args) { this._emit('ERROR', msg, '#ef4444', ...args); },
+    audio(msg, ...args) { this._emit('AUDIO', msg, '#a855f7', ...args); },
+    dsp(msg, ...args) { this._emit('DSP', msg, '#ec4899', ...args); },
+    _emit(level, msg, color, ...args) {
+        const time = new Date().toLocaleTimeString();
+        console.log(`%c[${time}] [${level}] ${msg}`, `color: ${color}; font-weight: bold;`, ...args);
+        
+        const logLine = `[${time}] [${level}] ${msg}`;
+        this.logs.push({ time, level, msg, color });
+        if (this.logs.length > this.maxLogs) this.logs.shift();
+        
+        const logContainer = document.getElementById("ui-log-content");
+        if (logContainer) {
+            const entry = document.createElement("div");
+            entry.className = `log-item log-${level.toLowerCase()}`;
+            entry.style.color = color;
+            entry.innerText = logLine;
+            logContainer.appendChild(entry);
+            logContainer.scrollTop = logContainer.scrollHeight;
+        }
+    }
+};
+
+window.addEventListener('error', (e) => {
+    Logger.error(`Global Error: ${e.message} (${e.filename}:${e.lineno})`);
+});
+window.addEventListener('unhandledrejection', (e) => {
+    Logger.error(`Unhandled Promise Rejection: ${e.reason ? (e.reason.message || e.reason) : 'Unknown Error'}`);
+});
 
 // Global Web Audio State
 let audioCtx = null;
@@ -55,6 +90,14 @@ const THEATERS = {
 };
 
 let activeTheaterKey = 'theater';
+let customHallWidth = 20;
+let customHallDepth = 24;
+let customHallHeight = 7;
+let cameraMode = 'third_person'; // 'third_person', 'fps', 'top_down'
+let pitchAngle = 0; // mouse look pitch for FPS view
+let isMouseDownView = false;
+let previousMousePosition = { x: 0, y: 0 };
+
 let enableReflections = true;
 let enableRays = true;
 let reverbWetMix = 0.3;
@@ -72,6 +115,47 @@ let activeStemsList = ['vocals', 'drums', 'bass', 'other'];
 let listenerPos = new THREE.Vector3(0, 0.5, 0);
 let listenerHeading = 0; // facing direction angle in radians (0 = facing -Z)
 const keysPressed = {};
+
+function clearAllKeys() {
+    for (const k in keysPressed) {
+        delete keysPressed[k];
+    }
+    shiftPressed = false;
+    updateHUDKeyActive("key-w", false);
+    updateHUDKeyActive("key-a", false);
+    updateHUDKeyActive("key-s", false);
+    updateHUDKeyActive("key-d", false);
+    updateHUDKeyActive("key-q", false);
+    updateHUDKeyActive("key-e", false);
+    updateHUDKeyActive("key-shift", false);
+}
+
+// Helper to get current dynamic hall dimensions
+function getHallDimensions() {
+    if (activeTheaterKey === 'custom') {
+        return {
+            name: "Custom Dynamic Hall",
+            width: customHallWidth,
+            depth: customHallDepth,
+            height: customHallHeight,
+            absorption: wallAbsorption,
+            t60: calculateDynamicT60(customHallWidth, customHallDepth, customHallHeight, wallAbsorption),
+            floorColor: 0x111827,
+            wallColor: 0x0f172a,
+            accentColor: 0xa855f7
+        };
+    }
+    return THEATERS[activeTheaterKey] || THEATERS['theater'];
+}
+
+function calculateDynamicT60(w, d, h, absorption) {
+    const volume = w * d * h;
+    const surfaceArea = 2 * (w * d + w * h + d * h);
+    const alpha = Math.max(0.05, absorption);
+    // Sabine formula T60 = 0.161 * V / (S * alpha)
+    const t60 = 0.161 * volume / (surfaceArea * alpha);
+    return Math.min(8.0, Math.max(0.2, t60));
+}
 
 // Pointer / Raycasting Pick & Place State
 const raycaster = new THREE.Raycaster();
@@ -103,11 +187,21 @@ const INITIAL_POSITIONS = {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function initAudio() {
-    if (audioCtx) return;
+    if (audioCtx) {
+        if (audioCtx.state === 'suspended') {
+            audioCtx.resume().catch(() => {});
+        }
+        return;
+    }
     
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
     audioCtx = new AudioContextClass();
+    if (audioCtx.state === 'suspended') {
+        audioCtx.resume().catch(() => {});
+    }
     
+    Logger.audio(`Initialized Web Audio Context (SampleRate: ${audioCtx.sampleRate}Hz)`);
+
     // Create Master Gain Node
     masterGain = audioCtx.createGain();
     masterGain.gain.value = 0.8;
@@ -124,21 +218,28 @@ function initAudio() {
     
     // Convolver Node for Room Impulse Response
     convolverNode = audioCtx.createConvolver();
-    updateReverbIR();
+    try {
+        updateReverbIR();
+    } catch (e) {
+        Logger.warn("Failed to set Reverb IR:", e);
+    }
     convolverNode.connect(reverbGainNode);
     
     updateWebAudioListener();
 }
 
-function createReverbIR(duration, decay, sampleRate = 44100) {
-    const length = Math.floor(sampleRate * Math.max(0.1, duration));
-    const impulse = audioCtx.createBuffer(2, length, sampleRate);
+function createReverbIR(duration, decay, sampleRate) {
+    const sr = sampleRate || (audioCtx ? audioCtx.sampleRate : 44100);
+    const safeDuration = Math.max(0.1, Math.min(3.0, duration || 1.0));
+    const length = Math.floor(sr * safeDuration);
+    const impulse = audioCtx.createBuffer(2, length, sr);
     const left = impulse.getChannelData(0);
     const right = impulse.getChannelData(1);
+    const safeDecay = Math.max(0.1, decay || 1.0);
 
     for (let i = 0; i < length; i++) {
-        const t = i / sampleRate;
-        const env = Math.exp(-t * 6.91 / decay);
+        const t = i / sr;
+        const env = Math.exp(-t * 6.91 / safeDecay);
         left[i] = (Math.random() * 2 - 1) * env;
         right[i] = (Math.random() * 2 - 1) * env;
     }
@@ -147,15 +248,75 @@ function createReverbIR(duration, decay, sampleRate = 44100) {
 
 function updateReverbIR() {
     if (!audioCtx || !convolverNode) return;
-    const currentTheater = THEATERS[activeTheaterKey];
-    const irBuffer = createReverbIR(currentTheater.t60, currentTheater.t60, audioCtx.sampleRate);
-    convolverNode.buffer = irBuffer;
+    try {
+        const currentTheater = getHallDimensions();
+        const irBuffer = createReverbIR(currentTheater.t60, currentTheater.t60, audioCtx.sampleRate);
+        convolverNode.buffer = irBuffer;
+    } catch (err) {
+        console.warn("Error updating Reverb IR:", err);
+    }
+}
+
+function getApiUrl(path) {
+    if (!path) return '';
+    if (path.startsWith('http://') || path.startsWith('https://')) {
+        return path;
+    }
+    const origin = (window.location.protocol.startsWith('http')) 
+        ? window.location.origin 
+        : 'http://127.0.0.1:5000';
+    
+    const cleanPath = path.startsWith('/') ? path : `/${path}`;
+    return `${origin}${cleanPath}`;
+}
+
+function getWsUrl(path) {
+    if (!path) return '';
+    const cleanPath = path.startsWith('/') ? path : `/${path}`;
+    if (window.location.protocol === 'https:') {
+        return `wss://${window.location.host}${cleanPath}`;
+    }
+    if (window.location.protocol === 'http:') {
+        return `ws://${window.location.host}${cleanPath}`;
+    }
+    return `ws://127.0.0.1:5000${cleanPath}`;
 }
 
 async function loadAudioBuffer(url) {
-    const response = await fetch(url);
-    const arrayBuffer = await response.arrayBuffer();
-    return await audioCtx.decodeAudioData(arrayBuffer);
+    const fullUrl = getApiUrl(url);
+    const response = await fetch(fullUrl);
+    if (!response.ok) {
+        throw new Error(`HTTP ${response.status} loading stem (${response.statusText})`);
+    }
+    let arrayBuffer = await response.arrayBuffer();
+    
+    initAudio();
+
+    if (audioCtx && audioCtx.state === 'suspended') {
+        try { await audioCtx.resume(); } catch (_) {}
+    }
+
+    try {
+        const decoded = await audioCtx.decodeAudioData(arrayBuffer);
+        arrayBuffer = null;
+        return decoded;
+    } catch (promiseErr) {
+        return new Promise((resolve, reject) => {
+            try {
+                const bufferCopy = (arrayBuffer && arrayBuffer.byteLength > 0) ? arrayBuffer.slice(0) : new ArrayBuffer(0);
+                audioCtx.decodeAudioData(
+                    bufferCopy,
+                    (decodedBuffer) => {
+                        arrayBuffer = null;
+                        resolve(decodedBuffer);
+                    },
+                    (err) => reject(new Error(`WebAudio decode error: ${err ? (err.message || err) : 'Failed to decode audio'}`))
+                );
+            } catch (fallbackErr) {
+                reject(new Error(`Decoding error: ${fallbackErr.message || fallbackErr}`));
+            }
+        });
+    }
 }
 
 function updateStemGains() {
@@ -208,17 +369,36 @@ function updateWebAudioListener() {
 
 function initThree() {
     const container = document.getElementById("canvas-container");
-    const width = container.clientWidth;
-    const height = container.clientHeight;
+    if (!container) return;
+    if (typeof THREE === 'undefined') {
+        console.error("[Three.js Error]: THREE is not loaded.");
+        return;
+    }
+
+    const width = Math.max(100, container.clientWidth || 800);
+    const height = Math.max(100, container.clientHeight || 600);
     
     scene = new THREE.Scene();
     scene.background = new THREE.Color(0x090d16);
     
     camera = new THREE.PerspectiveCamera(50, width / height, 0.1, 200);
     
-    renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setSize(width, height);
     renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+    renderer.domElement.addEventListener('webglcontextlost', (e) => {
+        e.preventDefault();
+        console.warn('[WebGL] WebGL Context Lost. Pausing rendering loop...');
+    }, false);
+
+    renderer.domElement.addEventListener('webglcontextrestored', () => {
+        console.log('[WebGL] WebGL Context Restored. Rebuilding scene geometry...');
+        buildTheaterGeometry();
+    }, false);
+
     container.appendChild(renderer.domElement);
     
     const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
@@ -268,15 +448,34 @@ function initThree() {
         renderer.setSize(w, h);
     });
     
-    // Keyboard Event Listeners for WASD Navigation
+    // Keyboard Event Listeners for WASD Navigation with Shift/Caps normalization and input filtering
+    function isInputElement(target) {
+        if (!target || !target.tagName) return false;
+        const tag = target.tagName.toUpperCase();
+        return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable;
+    }
+
     window.addEventListener("keydown", (e) => {
+        if (isInputElement(e.target)) return;
         keysPressed[e.key] = true;
-        if (e.key === "Shift") shiftPressed = true;
+        if (e.key) keysPressed[e.key.toLowerCase()] = true;
+        if (e.code) keysPressed[e.code] = true;
+        if (e.key === "Shift" || (e.code && e.code.startsWith("Shift"))) shiftPressed = true;
     });
     
     window.addEventListener("keyup", (e) => {
-        keysPressed[e.key] = false;
-        if (e.key === "Shift") shiftPressed = false;
+        if (e.key) {
+            keysPressed[e.key] = false;
+            keysPressed[e.key.toLowerCase()] = false;
+        }
+        if (e.code) keysPressed[e.code] = false;
+        if (e.key === "Shift" || (e.code && e.code.startsWith("Shift"))) shiftPressed = false;
+    });
+
+    window.addEventListener("blur", clearAllKeys);
+    window.addEventListener("focus", clearAllKeys);
+    document.addEventListener("visibilitychange", () => {
+        if (document.hidden) clearAllKeys();
     });
     
     // Drag-and-drop listener
@@ -392,21 +591,25 @@ function createTextLabelSprite(text, hexColor) {
 //  Theater Architecture Generator (Small Room to Cathedral)
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ─────────────────────────────────────────────────────────────────────────────
+//  Empty Concert Hall Architecture Generator
+// ─────────────────────────────────────────────────────────────────────────────
+
 function buildTheaterGeometry() {
     if (roomGroup) scene.remove(roomGroup);
     roomGroup = new THREE.Group();
 
-    const t = THEATERS[activeTheaterKey];
+    const t = getHallDimensions();
     const w = t.width;
     const d = t.depth;
     const h = t.height;
 
-    // Floor Mesh
+    // Floor Mesh (Polished hall floor)
     const floorGeo = new THREE.PlaneGeometry(w, d);
     const floorMat = new THREE.MeshStandardMaterial({
         color: t.floorColor,
-        roughness: 0.5,
-        metalness: 0.2
+        roughness: 0.4,
+        metalness: 0.3
     });
     const floorMesh = new THREE.Mesh(floorGeo, floorMat);
     floorMesh.rotation.x = -Math.PI / 2;
@@ -414,25 +617,26 @@ function buildTheaterGeometry() {
     floorMesh.receiveShadow = true;
     roomGroup.add(floorMesh);
 
-    // Floor Grid lines
-    const grid = new THREE.GridHelper(Math.max(w, d), Math.max(w, d)/2, t.accentColor, 0x334155);
+    // Floor Grid lines (Architectural layout grid)
+    const gridDivs = Math.max(w, d);
+    const grid = new THREE.GridHelper(Math.max(w, d), gridDivs, t.accentColor, 0x334155);
     grid.position.y = 0.01;
     roomGroup.add(grid);
 
-    // Wireframe Boundary Box
+    // Outer Boundary Box Wireframe
     const wallGeo = new THREE.BoxGeometry(w, h, d);
     const wallEdges = new THREE.EdgesGeometry(wallGeo);
-    const wallMat = new THREE.LineBasicMaterial({ color: t.accentColor, opacity: 0.6, transparent: true });
+    const wallMat = new THREE.LineBasicMaterial({ color: t.accentColor, opacity: 0.7, transparent: true });
     const wallLines = new THREE.LineSegments(wallEdges, wallMat);
     wallLines.position.y = h / 2;
     roomGroup.add(wallLines);
 
-    // Semi-transparent Wall Shell
+    // Semi-transparent Hall Wall Shell
     const wallPlaneMat = new THREE.MeshPhysicalMaterial({
         color: t.wallColor,
-        roughness: 0.8,
-        transmission: 0.5,
-        opacity: 0.15,
+        roughness: 0.7,
+        transmission: 0.6,
+        opacity: 0.18,
         transparent: true,
         side: THREE.BackSide
     });
@@ -440,81 +644,67 @@ function buildTheaterGeometry() {
     wallBox.position.y = h / 2;
     roomGroup.add(wallBox);
 
-    // Architectural features per environment
-    if (activeTheaterKey !== 'small_room') {
-        // Elevated Stage Platform at Front (-Z)
-        const stageW = w * 0.75;
-        const stageD = d * 0.25;
-        const stageH = 0.6;
-        const stageGeo = new THREE.BoxGeometry(stageW, stageH, stageD);
-        const stageMat = new THREE.MeshStandardMaterial({ color: 0x1e1b4b, roughness: 0.5 });
-        const stageMesh = new THREE.Mesh(stageGeo, stageMat);
-        stageMesh.position.set(0, stageH / 2, -d / 2 + stageD / 2);
-        stageMesh.receiveShadow = true;
-        roomGroup.add(stageMesh);
-    }
-
-    if (activeTheaterKey === 'cathedral') {
-        // Gothic Stone Columns
-        for (let z = -d/2 + 6; z <= d/2 - 6; z += 12) {
-            [-w/2 + 2, w/2 - 2].forEach(x => {
-                const colGeo = new THREE.CylinderGeometry(0.8, 1.0, h, 16);
-                const colMat = new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.8 });
-                const colMesh = new THREE.Mesh(colGeo, colMat);
-                colMesh.position.set(x, h/2, z);
-                roomGroup.add(colMesh);
-            });
-        }
-    }
+    // Boundary Corner Pillars to define hall geometry
+    const pillarGeo = new THREE.CylinderGeometry(0.3, 0.3, h, 16);
+    const pillarMat = new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.5 });
+    [[-w/2, -d/2], [w/2, -d/2], [-w/2, d/2], [w/2, d/2]].forEach(([px, pz]) => {
+        const pillar = new THREE.Mesh(pillarGeo, pillarMat);
+        pillar.position.set(px, h / 2, pz);
+        roomGroup.add(pillar);
+    });
 
     scene.add(roomGroup);
-    const hudEl = document.getElementById("hud-theater-name");
-    if (hudEl) hudEl.innerText = t.name;
+
+    // Update HUD Stats
+    const dimEl = document.getElementById("hud-hall-dimensions");
+    const volEl = document.getElementById("hud-hall-volume");
+    if (dimEl) dimEl.innerText = `${w}m × ${d}m × ${h}m`;
+    if (volEl) {
+        const vol = (w * d * h).toLocaleString();
+        volEl.innerText = `${vol} m³`;
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  WASD Navigation Loop & Sound Ray Visualizer
+//  WASD Free-Roam & Camera Controller
 // ─────────────────────────────────────────────────────────────────────────────
 
 function handleWASD() {
-    let moved = false;
-    const t = THEATERS[activeTheaterKey];
+    const t = getHallDimensions();
     const halfW = t.width / 2 - 0.5;
     const halfD = t.depth / 2 - 0.5;
     const maxH = t.height - 0.5;
 
-    const MOVE_SPEED = 0.15;
-    const ROT_SPEED = 0.04;
+    const isSprint = keysPressed['Shift'] || keysPressed['shift'] || keysPressed['ShiftLeft'] || keysPressed['ShiftRight'] || shiftPressed;
+    const MOVE_SPEED = isSprint ? 0.35 : 0.15;
 
     const forwardVec = new THREE.Vector3(-Math.sin(listenerHeading), 0, -Math.cos(listenerHeading));
     const rightVec = new THREE.Vector3(Math.cos(listenerHeading), 0, -Math.sin(listenerHeading));
 
-    if (keysPressed['w'] || keysPressed['W'] || keysPressed['ArrowUp']) {
-        listenerPos.addScaledVector(forwardVec, MOVE_SPEED);
-        moved = true;
-    }
-    if (keysPressed['s'] || keysPressed['S'] || keysPressed['ArrowDown']) {
-        listenerPos.addScaledVector(forwardVec, -MOVE_SPEED);
-        moved = true;
-    }
-    if (keysPressed['a'] || keysPressed['A']) {
-        listenerPos.addScaledVector(rightVec, -MOVE_SPEED);
-        moved = true;
-    }
-    if (keysPressed['d'] || keysPressed['D']) {
-        listenerPos.addScaledVector(rightVec, MOVE_SPEED);
-        moved = true;
-    }
-    if (keysPressed['q'] || keysPressed['Q']) {
-        listenerPos.y = Math.max(0.3, listenerPos.y - MOVE_SPEED);
-        moved = true;
-    }
-    if (keysPressed['e'] || keysPressed['E']) {
-        listenerPos.y = Math.min(maxH, listenerPos.y + MOVE_SPEED);
-        moved = true;
-    }
+    const isW = keysPressed['w'] || keysPressed['W'] || keysPressed['KeyW'] || keysPressed['ArrowUp'];
+    const isS = keysPressed['s'] || keysPressed['S'] || keysPressed['KeyS'] || keysPressed['ArrowDown'];
+    const isA = keysPressed['a'] || keysPressed['A'] || keysPressed['KeyA'] || keysPressed['ArrowLeft'];
+    const isD = keysPressed['d'] || keysPressed['D'] || keysPressed['KeyD'] || keysPressed['ArrowRight'];
+    const isQ = keysPressed['q'] || keysPressed['Q'] || keysPressed['KeyQ'];
+    const isE = keysPressed['e'] || keysPressed['E'] || keysPressed['KeyE'];
 
-    // Clamp inside current theater boundaries
+    if (isW) listenerPos.addScaledVector(forwardVec, MOVE_SPEED);
+    if (isS) listenerPos.addScaledVector(forwardVec, -MOVE_SPEED);
+    if (isA) listenerPos.addScaledVector(rightVec, -MOVE_SPEED);
+    if (isD) listenerPos.addScaledVector(rightVec, MOVE_SPEED);
+    if (isQ) listenerPos.y = Math.max(0.3, listenerPos.y - MOVE_SPEED);
+    if (isE) listenerPos.y = Math.min(maxH, listenerPos.y + MOVE_SPEED);
+
+    // Update HUD active key caps
+    updateHUDKeyActive("key-w", isW);
+    updateHUDKeyActive("key-a", isA);
+    updateHUDKeyActive("key-s", isS);
+    updateHUDKeyActive("key-d", isD);
+    updateHUDKeyActive("key-q", isQ);
+    updateHUDKeyActive("key-e", isE);
+    updateHUDKeyActive("key-shift", isSprint);
+
+    // Clamp listener inside hall boundaries
     listenerPos.x = THREE.MathUtils.clamp(listenerPos.x, -halfW, halfW);
     listenerPos.z = THREE.MathUtils.clamp(listenerPos.z, -halfD, halfD);
 
@@ -525,43 +715,86 @@ function handleWASD() {
 
     updateWebAudioListener();
 
-    // Isometric follow camera positioning
-    const camOffset = new THREE.Vector3(
-        Math.sin(listenerHeading) * 8,
-        6,
-        Math.cos(listenerHeading) * 8
-    );
-    camera.position.copy(listenerPos).add(camOffset);
-    camera.lookAt(listenerPos.x, listenerPos.y + 0.5, listenerPos.z);
+    // Camera positioning based on cameraMode
+    if (cameraMode === 'fps') {
+        // 1st-Person Listener FPS View
+        camera.position.copy(listenerPos);
+        camera.position.y += 0.2; // Eye height
+        
+        const targetLook = new THREE.Vector3(
+            listenerPos.x - Math.sin(listenerHeading) * Math.cos(pitchAngle),
+            listenerPos.y + 0.2 + Math.sin(pitchAngle),
+            listenerPos.z - Math.cos(listenerHeading) * Math.cos(pitchAngle)
+        );
+        camera.lookAt(targetLook);
+    } else if (cameraMode === 'top_down') {
+        // Top-Down Stage View
+        const camH = Math.max(t.width, t.depth) * 1.1;
+        camera.position.set(0, camH, 0.1);
+        camera.lookAt(0, 0, 0);
+    } else {
+        // 3rd-Person Follow View (Default)
+        const camOffset = new THREE.Vector3(
+            Math.sin(listenerHeading) * 8,
+            5,
+            Math.cos(listenerHeading) * 8
+        );
+        camera.position.copy(listenerPos).add(camOffset);
+        camera.lookAt(listenerPos.x, listenerPos.y + 0.5, listenerPos.z);
+    }
 
     updateWASDHUD();
 }
 
-function updateWASDHUD() {
-    const posTxt = `(${listenerPos.x.toFixed(1)}, ${listenerPos.y.toFixed(1)}, ${listenerPos.z.toFixed(1)})`;
-    const headingDeg = Math.round((listenerHeading * 180 / Math.PI) % 360);
-    const posEl = document.getElementById("hud-listener-pos");
-    const headEl = document.getElementById("hud-listener-heading");
-    if (posEl) posEl.innerText = posTxt;
-    if (headEl) headEl.innerText = `${headingDeg}°`;
+function updateHUDKeyActive(elementId, isActive) {
+    const el = document.getElementById(elementId);
+    if (el) el.classList.toggle("active", Boolean(isActive));
 }
 
-function updateAcousticRays() {
-    if (rayGroup) scene.remove(rayGroup);
-    if (!enableRays || !enableReflections) return;
+let lastHUDPos = { x: -999, y: -999, z: -999, h: -999 };
 
-    rayGroup = new THREE.Group();
-    const t = THEATERS[activeTheaterKey];
+function updateWASDHUD() {
+    const headingDeg = Math.round(((listenerHeading * 180 / Math.PI) % 360 + 360) % 360);
+    
+    if (Math.abs(listenerPos.x - lastHUDPos.x) > 0.05 ||
+        Math.abs(listenerPos.y - lastHUDPos.y) > 0.05 ||
+        Math.abs(listenerPos.z - lastHUDPos.z) > 0.05 ||
+        headingDeg !== lastHUDPos.h) {
+
+        lastHUDPos = { x: listenerPos.x, y: listenerPos.y, z: listenerPos.z, h: headingDeg };
+        const posTxt = `(${listenerPos.x.toFixed(1)}, ${listenerPos.y.toFixed(1)}, ${listenerPos.z.toFixed(1)})`;
+        const posEl = document.getElementById("hud-listener-pos");
+        const headEl = document.getElementById("hud-listener-heading");
+        if (posEl) posEl.innerText = posTxt;
+        if (headEl) headEl.innerText = `${headingDeg}°`;
+    }
+}
+
+const rayLinePool = {};
+
+function updateAcousticRays() {
+    if (!enableRays || !enableReflections) {
+        if (rayGroup) rayGroup.visible = false;
+        return;
+    }
+
+    if (!rayGroup) {
+        rayGroup = new THREE.Group();
+        scene.add(rayGroup);
+    }
+    rayGroup.visible = true;
+
+    const t = getHallDimensions();
     const halfW = t.width / 2;
     const halfD = t.depth / 2;
 
-    activeStemsList.forEach(stem => {
+    activeStemsList.forEach((stem) => {
         const mesh = stemMeshes[stem];
         if (!mesh) return;
 
         const spkPos = mesh.position;
+        const color = STEM_COLORS[stem];
 
-        // Draw wall reflection rays (Speaker -> Wall Bounce Point -> Listener)
         const wallBouncePoints = [
             new THREE.Vector3(-halfW, spkPos.y, (spkPos.z + listenerPos.z)/2),
             new THREE.Vector3(halfW, spkPos.y, (spkPos.z + listenerPos.z)/2),
@@ -569,20 +802,41 @@ function updateAcousticRays() {
             new THREE.Vector3((spkPos.x + listenerPos.x)/2, spkPos.y, halfD)
         ];
 
-        wallBouncePoints.forEach(bounce => {
-            const points = [spkPos.clone(), bounce, listenerPos.clone()];
-            const rayGeo = new THREE.BufferGeometry().setFromPoints(points);
+        if (!rayLinePool[stem]) {
+            rayLinePool[stem] = [];
             const rayMat = new THREE.LineBasicMaterial({
-                color: STEM_COLORS[stem],
+                color: color,
                 opacity: 0.35,
                 transparent: true
             });
-            const line = new THREE.Line(rayGeo, rayMat);
-            rayGroup.add(line);
+
+            for (let i = 0; i < 4; i++) {
+                const rayGeo = new THREE.BufferGeometry();
+                const positions = new Float32Array(9);
+                rayGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+                const line = new THREE.Line(rayGeo, rayMat);
+                rayGroup.add(line);
+                rayLinePool[stem].push({ line, geo: rayGeo });
+            }
+        }
+
+        wallBouncePoints.forEach((bounce, idx) => {
+            const entry = rayLinePool[stem][idx];
+            if (!entry) return;
+
+            const posAttr = entry.geo.attributes.position;
+            const array = posAttr.array;
+
+            // P0: Speaker
+            array[0] = spkPos.x; array[1] = spkPos.y; array[2] = spkPos.z;
+            // P1: Wall Bounce
+            array[3] = bounce.x; array[4] = bounce.y; array[5] = bounce.z;
+            // P2: Listener
+            array[6] = listenerPos.x; array[7] = listenerPos.y; array[8] = listenerPos.z;
+
+            posAttr.needsUpdate = true;
         });
     });
-
-    scene.add(rayGroup);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -698,8 +952,9 @@ function getMousePosition(event) {
 
 function onMouseDown(event) {
     getMousePosition(event);
-    raycaster.setFromCamera(mouse, camera);
+    previousMousePosition = { x: event.clientX, y: event.clientY };
     
+    raycaster.setFromCamera(mouse, camera);
     const targets = activeStemsList.map(s => stemMeshes[s]).filter(Boolean);
     const intersects = raycaster.intersectObjects(targets, true);
     
@@ -711,23 +966,37 @@ function onMouseDown(event) {
         
         selectedStem = obj.name;
         isCarrying = true;
+        isMouseDownView = false;
         
         document.querySelectorAll('.stem-item').forEach(el => el.classList.remove('active'));
         const el = document.querySelector(`.stem-item.${selectedStem}`);
         if (el) el.classList.add('active');
         
         raycaster.ray.intersectPlane(planeXZ, intersectionPoint);
+    } else {
+        isMouseDownView = true;
     }
 }
 
 function onMouseMove(event) {
+    if (isMouseDownView) {
+        const deltaX = event.clientX - previousMousePosition.x;
+        const deltaY = event.clientY - previousMousePosition.y;
+        
+        listenerHeading += deltaX * 0.005;
+        pitchAngle = THREE.MathUtils.clamp(pitchAngle - deltaY * 0.005, -Math.PI / 2.2, Math.PI / 2.2);
+        
+        previousMousePosition = { x: event.clientX, y: event.clientY };
+        return;
+    }
+
     if (!isCarrying || !selectedStem) return;
     
     getMousePosition(event);
     raycaster.setFromCamera(mouse, camera);
     
     const mesh = stemMeshes[selectedStem];
-    const t = THEATERS[activeTheaterKey];
+    const t = getHallDimensions();
     const halfW = t.width / 2 - 0.5;
     const halfD = t.depth / 2 - 0.5;
     
@@ -754,6 +1023,7 @@ function onMouseMove(event) {
 
 function onMouseUp() {
     isCarrying = false;
+    isMouseDownView = false;
     selectedStem = null;
 }
 
@@ -795,38 +1065,52 @@ if (uploadForm) {
         sepProgress.classList.remove("hidden");
         progressBarFill.style.width = "0%";
         progressPercent.innerText = "0%";
+        progressStatusMsg.innerText = "Connecting live status...";
         
+        const sessionId = 'session_' + Math.random().toString(36).substring(2, 11) + '_' + Date.now();
+        
+        Logger.info(`Starting separation for: ${fileInput.files[0].name} (Session: ${sessionId})`);
+        
+        let ws = null;
+        try {
+            const wsUrl = getWsUrl(`/ws/progress/${sessionId}`);
+            ws = new WebSocket(wsUrl);
+            ws.onopen = () => {
+                Logger.info(`Live progress WebSocket connected for session: ${sessionId}`);
+            };
+            ws.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    if (typeof data.percent === 'number') {
+                        progressBarFill.style.width = `${data.percent}%`;
+                        progressPercent.innerText = `${data.percent}%`;
+                    }
+                    if (data.status) {
+                        progressStatusMsg.innerText = data.status;
+                        Logger.info(`[Separation Progress]: ${data.status}`);
+                    }
+                } catch (err) {
+                    console.error("WebSocket message parse error:", err);
+                }
+            };
+            await new Promise((res) => setTimeout(res, 150));
+        } catch (wsErr) {
+            Logger.warn("WebSocket progress connection fallback:", wsErr);
+        }
+
         const formData = new FormData();
         formData.append("file", fileInput.files[0]);
+        formData.append("session_id", sessionId);
         
-        let simulatedProgress = 0;
-        const progressTimer = setInterval(() => {
-            if (simulatedProgress < 90) {
-                simulatedProgress += (1.0 / (simulatedProgress * 0.15 + 1)) * 3;
-                const roundedVal = Math.round(simulatedProgress);
-                progressBarFill.style.width = `${roundedVal}%`;
-                progressPercent.innerText = `${roundedVal}%`;
-                
-                if (roundedVal < 30) {
-                    progressStatusMsg.innerText = "Loading Demucs model... (weights ~300MB)";
-                } else if (roundedVal < 75) {
-                    progressStatusMsg.innerText = "Running AI neural separation... (watch server console)";
-                } else {
-                    progressStatusMsg.innerText = "Finalizing wav stems rendering...";
-                }
-            }
-        }, 1500);
-
         try {
-            const response = await fetch("/api/separate", {
+            const separateUrl = getApiUrl("/api/separate");
+            const response = await fetch(separateUrl, {
                 method: "POST",
                 body: formData
             });
             
-            clearInterval(progressTimer);
-            
             if (!response.ok) {
-                const data = await response.json();
+                const data = await response.json().catch(() => ({ detail: "Separation request failed" }));
                 throw new Error(data.detail || "Separation failed");
             }
             
@@ -835,18 +1119,28 @@ if (uploadForm) {
             
             progressBarFill.style.width = "100%";
             progressPercent.innerText = "100%";
-            progressStatusMsg.innerText = "Stem separation complete!";
-            
-            setTimeout(() => sepProgress.classList.add("hidden"), 3000);
+            progressStatusMsg.innerText = "Separation complete! Decoding audio...";
+            Logger.success("Stem separation finished! Received stem URLs from server.");
+
+            if (ws) {
+                try { ws.close(); } catch (_) {}
+            }
+
+            setTimeout(() => sepProgress.classList.add("hidden"), 2500);
             
             await loadAllStems();
             
         } catch (err) {
-            clearInterval(progressTimer);
+            if (ws) {
+                try { ws.close(); } catch (_) {}
+            }
             sepProgress.classList.add("hidden");
-            fileInput.disabled = false;
-            btnSeparate.disabled = false;
-            alert(`Error: ${err.message}`);
+            if (fileInput) fileInput.disabled = false;
+            if (btnSeparate) btnSeparate.disabled = false;
+            Logger.error(`Error during stem separation: ${err.message}`);
+            alert(`Error during stem separation: ${err.message}`);
+        } finally {
+            clearAllKeys();
         }
     });
 }
@@ -858,16 +1152,29 @@ if (uploadForm) {
 async function loadAllStems() {
     if (!stemsData) return;
     
-    document.getElementById("status-text").innerText = "Downloading decoded audio stems...";
+    document.getElementById("status-text").innerText = "Decoding separated audio stems...";
     document.getElementById("status-dot").classList.add("loading");
-    
+    Logger.audio("Decoding 4 separated audio stem tracks into Web Audio buffers...");
+
     try {
+        // Stop active audio nodes & free old buffer references before loading new stems
+        stopStems();
+        audioBuffers = {};
+
+        // Decode stems sequentially with GC pauses to prevent memory spike / WebAudio renderer crash
         for (const stem of activeStemsList) {
-            document.getElementById("status-text").innerText = `Downloading ${stem} stem...`;
-            audioBuffers[stem] = await loadAudioBuffer(stemsData[stem]);
+            if (stemsData[stem]) {
+                document.getElementById("status-text").innerText = `Decoding ${stem} audio stem...`;
+                Logger.audio(`Fetching & decoding ${stem} stem WAV file...`);
+                
+                // Allow V8 Garbage Collector to breathe between stem decodes
+                await new Promise(res => setTimeout(res, 200));
+                
+                audioBuffers[stem] = await loadAudioBuffer(stemsData[stem]);
+            }
         }
         
-        duration = Math.max(...activeStemsList.map(s => audioBuffers[s].duration));
+        duration = Math.max(0, ...activeStemsList.map(s => (audioBuffers[s] ? audioBuffers[s].duration : 0)));
         
         document.getElementById("timeline-slider").disabled = false;
         document.getElementById("timeline-slider").max = duration;
@@ -878,16 +1185,20 @@ async function loadAllStems() {
         document.getElementById("btn-stop").disabled = false;
         document.getElementById("btn-export").disabled = false;
         
-        document.getElementById("status-text").innerText = "All stems loaded successfully";
+        document.getElementById("status-text").innerText = "All stems loaded & ready to mix!";
         document.getElementById("status-dot").classList.remove("loading");
-        
+        Logger.success(`All 4 stems decoded successfully! Total Duration: ${formatTime(duration)} (${duration.toFixed(1)}s)`);
+
         if (fileInput) fileInput.disabled = false;
         if (btnSeparate) btnSeparate.disabled = false;
         
     } catch (err) {
-        document.getElementById("status-text").innerText = "Failed to load stems";
+        document.getElementById("status-text").innerText = "Error decoding audio";
         document.getElementById("status-dot").classList.remove("loading");
-        alert(`Failed to load audio files: ${err.message}`);
+        if (fileInput) fileInput.disabled = false;
+        if (btnSeparate) btnSeparate.disabled = false;
+        Logger.error(`Failed to decode stems: ${err.message}`);
+        alert(`Failed to fetch audio stems: ${err.message}`);
     }
 }
 
@@ -917,9 +1228,17 @@ function playStems(offset = 0) {
         panner.rolloffFactor = 1.0;
         
         const mesh = stemMeshes[stem];
-        panner.positionX.value = mesh.position.x;
-        panner.positionY.value = mesh.position.y;
-        panner.positionZ.value = mesh.position.z;
+        const posX = (mesh && mesh.position) ? mesh.position.x : (INITIAL_POSITIONS[stem]?.x || 0);
+        const posY = (mesh && mesh.position) ? mesh.position.y : (INITIAL_POSITIONS[stem]?.y || 0.5);
+        const posZ = (mesh && mesh.position) ? mesh.position.z : (INITIAL_POSITIONS[stem]?.z || 0);
+
+        if (panner.positionX) {
+            panner.positionX.value = posX;
+            panner.positionY.value = posY;
+            panner.positionZ.value = posZ;
+        } else {
+            panner.setPosition(posX, posY, posZ);
+        }
         
         // Tone EQ
         const toneFilter = audioCtx.createBiquadFilter();
@@ -1193,12 +1512,87 @@ if (timelineSlider) {
     });
 }
 
-// Theater Architecture Selector Binding
+// Dynamic Hall Controls & Presets
+const sliderHallWidth = document.getElementById("slider-hall-width");
+const sliderHallDepth = document.getElementById("slider-hall-depth");
+const sliderHallHeight = document.getElementById("slider-hall-height");
+const valHallWidth = document.getElementById("val-hall-width");
+const valHallDepth = document.getElementById("val-hall-depth");
+const valHallHeight = document.getElementById("val-hall-height");
+const selectCamMode = document.getElementById("select-cam-mode");
+const btnFullscreenStage = document.getElementById("btn-fullscreen-stage");
+const stageViewportContainer = document.getElementById("stage-viewport-container");
+
+function updateDynamicHallUIFromPreset() {
+    const dims = getHallDimensions();
+    customHallWidth = dims.width;
+    customHallDepth = dims.depth;
+    customHallHeight = dims.height;
+
+    if (sliderHallWidth) sliderHallWidth.value = dims.width;
+    if (sliderHallDepth) sliderHallDepth.value = dims.depth;
+    if (sliderHallHeight) sliderHallHeight.value = dims.height;
+    if (valHallWidth) valHallWidth.innerText = `${dims.width}m`;
+    if (valHallDepth) valHallDepth.innerText = `${dims.depth}m`;
+    if (valHallHeight) valHallHeight.innerText = `${dims.height}m`;
+}
+
 if (selectTheater) {
     selectTheater.addEventListener("change", (e) => {
         activeTheaterKey = e.target.value;
+        updateDynamicHallUIFromPreset();
         buildTheaterGeometry();
         updateReverbIR();
+    });
+}
+
+function handleDynamicSliderChange() {
+    activeTheaterKey = 'custom';
+    if (selectTheater) selectTheater.value = 'custom';
+
+    if (sliderHallWidth) {
+        customHallWidth = parseFloat(sliderHallWidth.value);
+        if (valHallWidth) valHallWidth.innerText = `${customHallWidth}m`;
+    }
+    if (sliderHallDepth) {
+        customHallDepth = parseFloat(sliderHallDepth.value);
+        if (valHallDepth) valHallDepth.innerText = `${customHallDepth}m`;
+    }
+    if (sliderHallHeight) {
+        customHallHeight = parseFloat(sliderHallHeight.value);
+        if (valHallHeight) valHallHeight.innerText = `${customHallHeight}m`;
+    }
+
+    buildTheaterGeometry();
+    updateReverbIR();
+}
+
+if (sliderHallWidth) sliderHallWidth.addEventListener("input", handleDynamicSliderChange);
+if (sliderHallDepth) sliderHallDepth.addEventListener("input", handleDynamicSliderChange);
+if (sliderHallHeight) sliderHallHeight.addEventListener("input", handleDynamicSliderChange);
+
+if (selectCamMode) {
+    selectCamMode.addEventListener("change", (e) => {
+        cameraMode = e.target.value;
+    });
+}
+
+if (btnFullscreenStage && stageViewportContainer) {
+    btnFullscreenStage.addEventListener("click", () => {
+        stageViewportContainer.classList.toggle("fullscreen");
+        const isFS = stageViewportContainer.classList.contains("fullscreen");
+        btnFullscreenStage.innerText = isFS ? "✕ Exit Fullscreen" : "⛶ Fullscreen";
+
+        setTimeout(() => {
+            const container = document.getElementById("canvas-container");
+            if (container && renderer && camera) {
+                const w = container.clientWidth;
+                const h = container.clientHeight;
+                camera.aspect = w / h;
+                camera.updateProjectionMatrix();
+                renderer.setSize(w, h);
+            }
+        }, 100);
     });
 }
 

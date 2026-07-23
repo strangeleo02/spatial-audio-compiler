@@ -326,9 +326,12 @@ class SpatialAudioMixerApp(ctk.CTk):
                 with self.lock:
                     self.hrir_l = hrir_l
                     self.hrir_r = hrir_r
+                    was_playing = self.is_playing
+                    self.is_playing = False
                     for proc in self.dsp_processors:
                         proc.load_hrir_database(self.hrir_l, self.hrir_r)
                     self.apply_dsp_states_to_processors()
+                    self.is_playing = was_playing
                 print("[HRTF] CIPIC KEMAR 3D HRTF Database loaded into C++ DSP processors successfully!")
             except Exception as e:
                 print(f"[HRTF] Error loading CIPIC KEMAR HRTF database: {e}")
@@ -1025,14 +1028,25 @@ class SpatialAudioMixerApp(ctk.CTk):
 
             self.total_frames = max_len
 
-            # Reset C++ Binaural Processors and re-apply HRTF database if available
-            for proc in self.dsp_processors:
-                proc.reset()
-                if self.hrir_l is not None and self.hrir_r is not None:
-                    proc.load_hrir_database(self.hrir_l, self.hrir_r)
+            # Safely stop and close existing stream if running
+            if self.stream is not None:
+                try:
+                    if self.stream.active:
+                        self.stream.stop()
+                    self.stream.close()
+                except Exception:
+                    pass
+                self.stream = None
 
-            # Apply initial position parameters to DSP
-            self.apply_dsp_states_to_processors()
+            with self.lock:
+                # Reset C++ Binaural Processors and re-apply HRTF database if available
+                for proc in self.dsp_processors:
+                    proc.reset()
+                    if self.hrir_l is not None and self.hrir_r is not None:
+                        proc.load_hrir_database(self.hrir_l, self.hrir_r)
+
+                # Apply initial position parameters to DSP
+                self.apply_dsp_states_to_processors()
 
             # Initialize PortAudio / WASAPI Low-Latency Audio Callback Stream
             self.stream = sd.OutputStream(
@@ -1072,36 +1086,44 @@ class SpatialAudioMixerApp(ctk.CTk):
     #  Binaural Mixing Callback (runs on high-priority audio thread)
     # ══════════════════════════════════════════════════════════════════════
     def audio_callback(self, outdata, frames, time_info, status):
-        if not self.is_playing or self.current_frame >= self.total_frames:
+        try:
+            if not self.is_playing or self.current_frame >= self.total_frames or not self.track_arrays:
+                outdata.fill(0)
+                if self.is_playing and self.current_frame >= self.total_frames:
+                    self.is_playing = False
+                    self.after(0, self.on_playback_finished)
+                return
+
+            chunk_size = min(frames, self.total_frames - self.current_frame)
+            num_tracks = min(len(self.track_arrays), len(self._preallocated_chunk_buffers))
+
+            for i in range(num_tracks):
+                arr = self.track_arrays[i]
+                buf = self._preallocated_chunk_buffers[i]
+                if chunk_size >= frames:
+                    buf[:frames] = arr[self.current_frame : self.current_frame + frames]
+                else:
+                    buf[:chunk_size] = arr[self.current_frame : self.current_frame + chunk_size]
+                    buf[chunk_size:frames] = 0.0
+
+            out_L_view = self._preallocated_out_L[:frames]
+            out_R_view = self._preallocated_out_R[:frames]
+
+            with self.lock:
+                # Lock-Free C++ In-place multi-threaded audio mixer execution
+                self.mixer.process_mix_in_place(
+                    self._preallocated_chunks_list[:num_tracks],
+                    out_L_view,
+                    out_R_view,
+                    self.master_volume
+                )
+
+            outdata[:, 0] = out_L_view
+            outdata[:, 1] = out_R_view
+            self.current_frame += chunk_size
+        except Exception as err:
+            print(f"[AudioCallback Error]: {err}")
             outdata.fill(0)
-            if self.is_playing and self.current_frame >= self.total_frames:
-                self.is_playing = False
-                self.after(0, self.on_playback_finished)
-            return
-
-        chunk_size = min(frames, self.total_frames - self.current_frame)
-        for i, arr in enumerate(self.track_arrays):
-            buf = self._preallocated_chunk_buffers[i]
-            if chunk_size >= frames:
-                buf[:frames] = arr[self.current_frame : self.current_frame + frames]
-            else:
-                buf[:chunk_size] = arr[self.current_frame : self.current_frame + chunk_size]
-                buf[chunk_size:frames] = 0.0
-
-        out_L_view = self._preallocated_out_L[:frames]
-        out_R_view = self._preallocated_out_R[:frames]
-
-        # Lock-Free C++ In-place multi-threaded audio mixer execution
-        self.mixer.process_mix_in_place(
-            self._preallocated_chunks_list,
-            out_L_view,
-            out_R_view,
-            self.master_volume
-        )
-
-        outdata[:, 0] = out_L_view
-        outdata[:, 1] = out_R_view
-        self.current_frame += chunk_size
 
     def apply_dsp_states_to_processors(self, processors=None):
         if processors is None:

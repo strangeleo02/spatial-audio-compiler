@@ -4,13 +4,13 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>3D Binaural Spatial Audio Mixer</title>
-    <link rel="stylesheet" href="/style.css">
+    <link rel="stylesheet" href="style.css">
     <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
-    <!-- Three.js CDN -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <!-- Three.js Local Asset -->
+    <script src="three.min.js"></script>
 </head>
 <body>
     <div class="app-container">
@@ -89,20 +89,47 @@
                     </div>
                 </div>
 
-                </div>
-
-                <!-- Card 3: Theater & Room Acoustics -->
+                <!-- Card 3: Theater & Dynamic Hall Acoustics -->
                 <div class="card card-theater">
-                    <h2>3. THEATER & ROOM ACOUSTICS</h2>
-                    <p class="card-desc">Select room architecture and configure wall acoustic reflections.</p>
+                    <h2>3. HALL & ACOUSTIC DESIGN</h2>
+                    <p class="card-desc">Customize dynamic hall dimensions and wall acoustic absorption.</p>
                     
                     <div class="setting-item">
-                        <label for="select-theater">Theater Environment</label>
+                        <label for="select-theater">Hall Presets</label>
                         <select id="select-theater" class="settings-select">
-                            <option value="small_room">🛋️ Small Studio Room (6x6x3m)</option>
-                            <option value="theater" selected>🎭 Medium Theater (16x20x7m)</option>
-                            <option value="symphony">🏛️ Symphony Hall (28x36x12m)</option>
-                            <option value="cathedral">⛪ Grand Cathedral (40x60x20m)</option>
+                            <option value="small_room">🛋️ Studio Room (10x10x4m)</option>
+                            <option value="theater" selected>🎭 Concert Hall (20x24x7m)</option>
+                            <option value="symphony">🏛️ Grand Symphony (30x36x12m)</option>
+                            <option value="cathedral">⛪ Cathedral (40x60x20m)</option>
+                            <option value="custom">⚙️ Custom Dynamic Hall</option>
+                        </select>
+                    </div>
+
+                    <!-- Dynamic Hall Sizing Sliders -->
+                    <div class="dynamic-hall-controls" id="dynamic-hall-controls">
+                        <div class="slider-row">
+                            <label for="slider-hall-width">Hall Width (X): <span id="val-hall-width">20m</span></label>
+                            <input type="range" id="slider-hall-width" min="10" max="60" value="20" step="1">
+                        </div>
+
+                        <div class="slider-row">
+                            <label for="slider-hall-depth">Hall Depth (Z): <span id="val-hall-depth">24m</span></label>
+                            <input type="range" id="slider-hall-depth" min="10" max="80" value="24" step="1">
+                        </div>
+
+                        <div class="slider-row">
+                            <label for="slider-hall-height">Hall Height (Y): <span id="val-hall-height">7m</span></label>
+                            <input type="range" id="slider-hall-height" min="4" max="25" value="7" step="0.5">
+                        </div>
+                    </div>
+
+                    <!-- Camera View Mode -->
+                    <div class="setting-item">
+                        <label for="select-cam-mode">Camera & Roam Mode</label>
+                        <select id="select-cam-mode" class="settings-select">
+                            <option value="third_person" selected>👤 3rd-Person Follow View</option>
+                            <option value="fps">👁️ 1st-Person Listener FPS (Mouse Look)</option>
+                            <option value="top_down">🛸 Top-Down Stage View</option>
                         </select>
                     </div>
 
@@ -155,44 +182,55 @@
                         </div>
                     </div>
                 </div>
+
+                <!-- Card 5: System Logs Console -->
+                <div class="card card-logs">
+                    <h2>SYSTEM & DEBUG LOGS</h2>
+                    <div id="ui-log-content" class="ui-log-content">
+                        <div class="log-item log-info">[System] Frontend Logger initialized.</div>
+                    </div>
+                </div>
             </section>
 
             <!-- Center Panel: 3D Stage Viewport -->
             <section class="panel-center">
-                <div class="stage-viewport-container">
+                <div class="stage-viewport-container" id="stage-viewport-container">
                     <div class="viewport-header">
-                        <h2>3D AUDITORIUM STAGE</h2>
+                        <h2>3D EMPTY CONCERT HALL</h2>
                         <div class="viewport-tips">
                             <span>🎮 WASD: Move Listener</span>
                             <span class="separator">•</span>
-                            <span>🔊 Click & Drag Speaker: Pick & Place</span>
+                            <span>Shift: Sprint</span>
                             <span class="separator">•</span>
-                            <span>Shift + Drag: Height</span>
+                            <span>🔊 Click & Drag Speaker: Position</span>
                         </div>
+                        <button id="btn-fullscreen-stage" class="btn-fullscreen" title="Toggle Fullscreen Canvas">⛶ Fullscreen</button>
                     </div>
                     <!-- WebGL Canvas Container with HUD Overlay -->
                     <div id="canvas-container" class="canvas-container">
                         <!-- WASD HUD Overlay -->
                         <div class="wasd-hud">
                             <div class="hud-badge">
-                                <span class="hud-title">WASD CONTROLS</span>
+                                <span class="hud-title">FREE ROAM CONTROLS</span>
                                 <div class="wasd-keys-diagram">
-                                    <div class="key-row"><span class="key-cap">W</span></div>
+                                    <div class="key-row"><span class="key-cap" id="key-w">W</span></div>
                                     <div class="key-row">
-                                        <span class="key-cap">A</span>
-                                        <span class="key-cap">S</span>
-                                        <span class="key-cap">D</span>
+                                        <span class="key-cap" id="key-a">A</span>
+                                        <span class="key-cap" id="key-s">S</span>
+                                        <span class="key-cap" id="key-d">D</span>
                                     </div>
                                     <div class="key-row subkeys">
-                                        <span class="key-cap mini">Q</span> <span class="key-label">Down</span>
-                                        <span class="key-cap mini">E</span> <span class="key-label">Up</span>
+                                        <span class="key-cap mini" id="key-q">Q</span> <span class="key-label">Down</span>
+                                        <span class="key-cap mini" id="key-e">E</span> <span class="key-label">Up</span>
+                                        <span class="key-cap mini" id="key-shift">Shift</span> <span class="key-label">Run</span>
                                     </div>
                                 </div>
                             </div>
                             <div class="listener-info-badge">
-                                <div class="info-row"><strong>Listener Pos:</strong> <span id="hud-listener-pos">(0.0, 0.0, 0.0)</span></div>
+                                <div class="info-row"><strong>Listener Pos:</strong> <span id="hud-listener-pos">(0.0, 0.5, 0.0)</span></div>
                                 <div class="info-row"><strong>Heading:</strong> <span id="hud-listener-heading">0° (Forward)</span></div>
-                                <div class="info-row"><strong>Theater:</strong> <span id="hud-theater-name">Medium Theater</span></div>
+                                <div class="info-row"><strong>Hall Size:</strong> <span id="hud-hall-dimensions">20m × 24m × 7m</span></div>
+                                <div class="info-row"><strong>Volume:</strong> <span id="hud-hall-volume">3,360 m³</span></div>
                             </div>
                         </div>
                     </div>
@@ -308,6 +346,6 @@
     </div>
 
     <!-- App Logic -->
-    <script src="/app.js"></script>
+    <script src="app.js"></script>
 </body>
 </html>

@@ -293,8 +293,9 @@ public:
         h_l_old.resize(hrir_len, 0.0f);
         h_r_old.resize(hrir_len, 0.0f);
 
-        overlap_l.assign(hrir_len, 0.0f);
-        overlap_r.assign(hrir_len, 0.0f);
+        size_t safe_overlap_size = std::max(static_cast<size_t>(hrir_len), static_cast<size_t>(16384));
+        overlap_l.assign(safe_overlap_size, 0.0f);
+        overlap_r.assign(safe_overlap_size, 0.0f);
 
         update_position_internal(target_azimuth.load(std::memory_order_relaxed),
                                  target_elevation.load(std::memory_order_relaxed),
@@ -468,8 +469,9 @@ public:
             compute_fft_conv(h_r_old, y_r_old);
         }
 
-        if (overlap_l.size() < static_cast<size_t>(hrir_len)) overlap_l.resize(hrir_len, 0.0f);
-        if (overlap_r.size() < static_cast<size_t>(hrir_len)) overlap_r.resize(hrir_len, 0.0f);
+        size_t min_overlap_needed = std::max(static_cast<size_t>(hrir_len), static_cast<size_t>(frames + hrir_len));
+        if (overlap_l.size() < min_overlap_needed) overlap_l.resize(min_overlap_needed, 0.0f);
+        if (overlap_r.size() < min_overlap_needed) overlap_r.resize(min_overlap_needed, 0.0f);
 
         // [STEP E] Overlap Add synthesis
         for (int i = 0; i < frames; ++i) {
@@ -485,8 +487,10 @@ public:
             }
 
             // [STEP F] Output = Time-domain IFFT result + Overlap Tail from previous block
-            output_left[i] = sample_l + overlap_l[i];
-            output_right[i] = sample_r + overlap_r[i];
+            float ov_l = (static_cast<size_t>(i) < overlap_l.size()) ? overlap_l[i] : 0.0f;
+            float ov_r = (static_cast<size_t>(i) < overlap_r.size()) ? overlap_r[i] : 0.0f;
+            output_left[i] = sample_l + ov_l;
+            output_right[i] = sample_r + ov_r;
         }
 
         // Save Overlap Tail for Next Block
@@ -504,8 +508,10 @@ public:
             overlap_l[n] = tail_l + (n + frames < static_cast<int>(overlap_l.size()) ? overlap_l[n + frames] : 0.0f);
             overlap_r[n] = tail_r + (n + frames < static_cast<int>(overlap_r.size()) ? overlap_r[n + frames] : 0.0f);
         }
-        std::fill(overlap_l.begin() + (hrir_len - 1), overlap_l.end(), 0.0f);
-        std::fill(overlap_r.begin() + (hrir_len - 1), overlap_r.end(), 0.0f);
+        if (hrir_len - 1 < static_cast<int>(overlap_l.size())) {
+            std::fill(overlap_l.begin() + (hrir_len - 1), overlap_l.end(), 0.0f);
+            std::fill(overlap_r.begin() + (hrir_len - 1), overlap_r.end(), 0.0f);
+        }
 
         if (position_changed) {
             position_changed = false;
@@ -646,10 +652,8 @@ public:
         py::array_t<float> output_right,
         double master_volume
     ) {
-        int num_tracks = static_cast<int>(py::len(input_arrays));
-        if (num_tracks != static_cast<int>(processors.size())) {
-            throw std::runtime_error("Input array count does not match processor count");
-        }
+        int num_tracks = std::min(static_cast<int>(py::len(input_arrays)), static_cast<int>(processors.size()));
+        if (num_tracks <= 0) return;
 
         py::buffer_info out_l_buf = output_left.request();
         py::buffer_info out_r_buf = output_right.request();

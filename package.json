@@ -1,0 +1,18 @@
+{
+  "name": "spatial-audio-compiler",
+  "version": "1.0.0",
+  "description": "3D Binaural Spatial Audio Mixer & Demucs Stem Separator Web Application",
+  "scripts": {
+    "start": "python src/server.py",
+    "server": "python src/server.py"
+  },
+  "keywords": [
+    "spatial-audio",
+    "binaural",
+    "demucs",
+    "threejs",
+    "fastapi"
+  ],
+  "author": "",
+  "license": "MIT"
+}

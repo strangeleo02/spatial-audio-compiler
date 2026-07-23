@@ -700,12 +700,24 @@ body {
     cursor: pointer;
 }
 
-/* WASD HUD Overlay */
+/* WASD HUD Overlay & Fullscreen Stage */
 .stage-viewport-container {
     position: relative;
     height: 100%;
     display: flex;
     flex-direction: column;
+    transition: all 0.3s ease;
+}
+
+.stage-viewport-container.fullscreen {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    z-index: 9999;
+    background: #090d16;
+    padding: 0;
 }
 
 .canvas-container {
@@ -714,10 +726,48 @@ body {
     overflow: hidden;
 }
 
+.viewport-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 16px;
+    background: #111827;
+    border-bottom: 1px solid #1f2937;
+}
+
+.viewport-header h2 {
+    font-size: 13px;
+    font-weight: 700;
+    color: #a855f7;
+    letter-spacing: 0.5px;
+}
+
+.btn-fullscreen {
+    background: #1e293b;
+    border: 1px solid #334155;
+    color: #38bdf8;
+    padding: 5px 12px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.btn-fullscreen:hover {
+    background: #38bdf8;
+    color: #0f172a;
+    border-color: #38bdf8;
+    box-shadow: 0 0 10px rgba(56, 189, 248, 0.4);
+}
+
 .wasd-hud {
     position: absolute;
-    top: 12px;
-    left: 12px;
+    top: 14px;
+    left: 14px;
     display: flex;
     gap: 12px;
     pointer-events: none;
@@ -725,13 +775,13 @@ body {
 }
 
 .hud-badge, .listener-info-badge {
-    background: rgba(15, 23, 42, 0.85);
-    backdrop-filter: blur(8px);
-    border: 1px solid rgba(51, 65, 85, 0.7);
+    background: rgba(15, 23, 42, 0.88);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(56, 189, 248, 0.3);
     border-radius: 8px;
-    padding: 8px 12px;
+    padding: 10px 14px;
     color: #f8fafc;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4);
 }
 
 .hud-title {
@@ -767,11 +817,20 @@ body {
     font-size: 11px;
     color: #38bdf8;
     box-shadow: 0 2px 0 #0f172a;
+    transition: all 0.1s ease;
 }
 
 .key-cap.mini {
     font-size: 9px;
     padding: 1px 4px;
+}
+
+.key-cap.active {
+    background: #38bdf8;
+    color: #0f172a;
+    border-color: #7dd3fc;
+    box-shadow: 0 0 10px rgba(56, 189, 248, 0.8);
+    transform: translateY(1px);
 }
 
 .key-label {
@@ -800,5 +859,69 @@ body {
     font-family: 'JetBrains Mono', monospace;
     color: #38bdf8;
 }
+
+/* Dynamic Hall Controls */
+.dynamic-hall-controls {
+    background: rgba(15, 23, 42, 0.6);
+    border: 1px solid #1e293b;
+    border-radius: 8px;
+    padding: 12px;
+    margin-top: 10px;
+    margin-bottom: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.dynamic-hall-controls .slider-row {
+    margin-bottom: 0;
+}
+
+.dynamic-hall-controls label {
+    font-size: 11px;
+    font-weight: 600;
+    color: #cbd5e1;
+    display: flex;
+    justify-content: space-between;
+}
+
+.dynamic-hall-controls input[type="range"] {
+    accent-color: #a855f7;
+}
+
+/* System Logs Console Card */
+.card-logs {
+    margin-top: 10px;
+}
+
+.ui-log-content {
+    background-color: #030712;
+    border: 1px solid #1e293b;
+    border-radius: 8px;
+    height: 140px;
+    max-height: 180px;
+    overflow-y: auto;
+    padding: 8px 10px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    line-height: 1.5;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.4);
+}
+
+.log-item {
+    word-break: break-word;
+    white-space: pre-wrap;
+}
+
+.log-item.log-info { color: #38bdf8; }
+.log-item.log-success { color: #10b981; }
+.log-item.log-warn { color: #f59e0b; }
+.log-item.log-error { color: #ef4444; }
+.log-item.log-audio { color: #a855f7; }
+.log-item.log-dsp { color: #ec4899; }
+
 
 

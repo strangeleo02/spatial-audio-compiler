@@ -1,25 +1,57 @@
-# Compiled binaries and object files
-*.o
-*.obj
-bin/spatial_mixer.exe
-bin/spatial_mixer
+# Node / Electron dependencies and build outputs
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+dist/
+out/
+release/
+.webpack/
+*.asar
 
-# Python caches and venv
+# Python caches and virtual environments
 __pycache__/
 *.py[cod]
 *$py.class
+*.so
 .venv/
 venv/
 env/
+ENV/
+env.bak/
+venv.bak/
 
-# OS-specific files
-.DS_Store
-Thumbs.db
-
-# Project-specific builds and temporary files
+# C / C++ build outputs
+*.o
+*.obj
 build/
-src/static/stems/
-*.so
-*.dylib
-*.egg-info/
+bin/spatial_mixer.exe
+bin/spatial_mixer
 
+# Dynamic Audio Stems & Temporary Uploads
+src/static/stems/*
+!src/static/stems/.gitkeep
+*.wav
+*.mp3
+*.flac
+*.m4a
+*.ogg
+
+# Operating system files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# IDE & Editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*.sublime-project
+*.sublime-workspace
